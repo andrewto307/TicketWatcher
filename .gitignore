@@ -1,0 +1,23 @@
+# Secrets / local env — NEVER commit these
+.env
+.env.local
+.env.*.local
+
+# Keep the template
+!.env.example
+
+# Go
+/bin/
+/out/
+*.exe
+/ticket-watcher
+
+# Node / frontend
+node_modules/
+web/node_modules/
+web/dist/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
