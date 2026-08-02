@@ -108,6 +108,31 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 	return i, err
 }
 
+const insertNotification = `-- name: InsertNotification :one
+INSERT INTO notifications (watch_id, channel, payload)
+VALUES ($1, $2, $3)
+RETURNING id, watch_id, channel, sent_at, payload
+`
+
+type InsertNotificationParams struct {
+	WatchID int64  `json:"watch_id"`
+	Channel string `json:"channel"`
+	Payload []byte `json:"payload"`
+}
+
+func (q *Queries) InsertNotification(ctx context.Context, arg InsertNotificationParams) (Notification, error) {
+	row := q.db.QueryRow(ctx, insertNotification, arg.WatchID, arg.Channel, arg.Payload)
+	var i Notification
+	err := row.Scan(
+		&i.ID,
+		&i.WatchID,
+		&i.Channel,
+		&i.SentAt,
+		&i.Payload,
+	)
+	return i, err
+}
+
 const insertPriceSnapshot = `-- name: InsertPriceSnapshot :one
 INSERT INTO price_snapshots (event_id, min_price_cents, max_price_cents, availability_status)
 VALUES ($1, $2, $3, $4)
@@ -141,18 +166,36 @@ func (q *Queries) InsertPriceSnapshot(ctx context.Context, arg InsertPriceSnapsh
 }
 
 const listActiveWatchesForEvent = `-- name: ListActiveWatchesForEvent :many
-SELECT id, user_id, event_id, condition_type, threshold_cents, status, last_evaluation, last_notified_at, poll_interval_s, created_at FROM watches WHERE event_id = $1 AND status = 'active'
+SELECT w.id, w.user_id, w.event_id, w.condition_type, w.threshold_cents, w.status, w.last_evaluation, w.last_notified_at, w.poll_interval_s, w.created_at, u.email AS user_email
+FROM watches w
+JOIN users u ON u.id = w.user_id
+WHERE w.event_id = $1 AND w.status = 'active'
 `
 
-func (q *Queries) ListActiveWatchesForEvent(ctx context.Context, eventID int64) ([]Watch, error) {
+type ListActiveWatchesForEventRow struct {
+	ID             int64              `json:"id"`
+	UserID         int64              `json:"user_id"`
+	EventID        int64              `json:"event_id"`
+	ConditionType  string             `json:"condition_type"`
+	ThresholdCents *int64             `json:"threshold_cents"`
+	Status         string             `json:"status"`
+	LastEvaluation bool               `json:"last_evaluation"`
+	LastNotifiedAt pgtype.Timestamptz `json:"last_notified_at"`
+	PollIntervalS  int32              `json:"poll_interval_s"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UserEmail      string             `json:"user_email"`
+}
+
+// Includes the owner's email so the notifier can address the alert.
+func (q *Queries) ListActiveWatchesForEvent(ctx context.Context, eventID int64) ([]ListActiveWatchesForEventRow, error) {
 	rows, err := q.db.Query(ctx, listActiveWatchesForEvent, eventID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Watch{}
+	items := []ListActiveWatchesForEventRow{}
 	for rows.Next() {
-		var i Watch
+		var i ListActiveWatchesForEventRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -164,6 +207,7 @@ func (q *Queries) ListActiveWatchesForEvent(ctx context.Context, eventID int64) 
 			&i.LastNotifiedAt,
 			&i.PollIntervalS,
 			&i.CreatedAt,
+			&i.UserEmail,
 		); err != nil {
 			return nil, err
 		}
@@ -294,6 +338,17 @@ func (q *Queries) ListWatchesWithEvent(ctx context.Context, userID int64) ([]Lis
 	return items, nil
 }
 
+const markNotified = `-- name: MarkNotified :exec
+UPDATE watches SET last_notified_at = now() WHERE id = $1
+`
+
+// Stamp when we last alerted. The watch stays 'active' (pure edge-trigger):
+// it re-fires only on a new false->true transition, not while the condition stays true.
+func (q *Queries) MarkNotified(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, markNotified, id)
+	return err
+}
+
 const minPollIntervalForEvent = `-- name: MinPollIntervalForEvent :one
 SELECT COALESCE(MIN(poll_interval_s), 300)::int AS interval_s
 FROM watches
@@ -306,6 +361,21 @@ func (q *Queries) MinPollIntervalForEvent(ctx context.Context, eventID int64) (i
 	var interval_s int32
 	err := row.Scan(&interval_s)
 	return interval_s, err
+}
+
+const setLastEvaluation = `-- name: SetLastEvaluation :exec
+UPDATE watches SET last_evaluation = $2 WHERE id = $1
+`
+
+type SetLastEvaluationParams struct {
+	ID             int64 `json:"id"`
+	LastEvaluation bool  `json:"last_evaluation"`
+}
+
+// Record the latest condition result (drives edge detection on the next poll).
+func (q *Queries) SetLastEvaluation(ctx context.Context, arg SetLastEvaluationParams) error {
+	_, err := q.db.Exec(ctx, setLastEvaluation, arg.ID, arg.LastEvaluation)
+	return err
 }
 
 const updateEventLatest = `-- name: UpdateEventLatest :exec

@@ -15,6 +15,7 @@ import (
 
 	"ticket-watcher/internal/config"
 	"ticket-watcher/internal/httpapi"
+	"ticket-watcher/internal/notifier"
 	"ticket-watcher/internal/ratelimit"
 	"ticket-watcher/internal/scheduler"
 	"ticket-watcher/internal/service"
@@ -63,10 +64,21 @@ func main() {
 	searchSvc := service.NewSearchService(tm)
 	watchSvc := service.NewWatchService(q, tm, user.ID)
 
+	// Notifications: real email if a Resend key is configured, else log-only.
+	var emailSender notifier.Sender
+	if cfg.ResendAPIKey != "" {
+		emailSender = notifier.NewResendSender(cfg.ResendAPIKey, cfg.NotifyFrom)
+		log.Print("notifier: using Resend email sender")
+	} else {
+		emailSender = notifier.NewLogSender()
+		log.Print("notifier: RESEND_API_KEY not set -> using log-only email sender")
+	}
+	notif := notifier.New(q, emailSender)
+
 	// Background engine: scheduler -> jobs channel -> worker pool.
 	jobs := make(chan int64, cfg.WorkerCount)
 	var workersWG sync.WaitGroup
-	worker.StartPool(ctx, cfg.WorkerCount, jobs, worker.Deps{Store: q, TM: tm}, &workersWG)
+	worker.StartPool(ctx, cfg.WorkerCount, jobs, worker.Deps{Store: q, TM: tm, Notifier: notif}, &workersWG)
 
 	sched := scheduler.New(q, quota, jobs, cfg.SchedulerInterval, cfg.MaxEventsPerTick)
 	var schedWG sync.WaitGroup

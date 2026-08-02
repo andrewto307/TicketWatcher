@@ -25,6 +25,10 @@ type Config struct {
 	SchedulerInterval time.Duration
 	MaxEventsPerTick  int
 	WorkerCount       int
+
+	// Notifications
+	ResendAPIKey string // if empty, the app uses a log-only email sender
+	NotifyFrom   string
 }
 
 // Load reads configuration from the environment, applying sensible defaults.
@@ -42,6 +46,8 @@ func Load() (Config, error) {
 		SchedulerInterval: getenvDuration("SCHEDULER_INTERVAL", 15*time.Second),
 		MaxEventsPerTick:  getenvInt("MAX_EVENTS_PER_TICK", 20),
 		WorkerCount:       getenvInt("WORKER_COUNT", 4),
+		ResendAPIKey:      os.Getenv("RESEND_API_KEY"),
+		NotifyFrom:        getenv("NOTIFY_FROM", "alerts@example.com"),
 	}
 	if cfg.TMAPIKey == "" {
 		return Config{}, errors.New("TM_API_KEY is required (get your Consumer Key at https://developer.ticketmaster.com/my-apps)")

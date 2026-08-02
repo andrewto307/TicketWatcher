@@ -52,7 +52,11 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: ListActiveWatchesForEvent :many
-SELECT * FROM watches WHERE event_id = $1 AND status = 'active';
+-- Includes the owner's email so the notifier can address the alert.
+SELECT w.*, u.email AS user_email
+FROM watches w
+JOIN users u ON u.id = w.user_id
+WHERE w.event_id = $1 AND w.status = 'active';
 
 -- name: ListWatchesWithEvent :many
 SELECT w.*,
@@ -68,3 +72,17 @@ FROM watches w
 JOIN events e ON e.id = w.event_id
 WHERE w.user_id = $1
 ORDER BY w.created_at DESC;
+
+-- name: SetLastEvaluation :exec
+-- Record the latest condition result (drives edge detection on the next poll).
+UPDATE watches SET last_evaluation = $2 WHERE id = $1;
+
+-- name: MarkNotified :exec
+-- Stamp when we last alerted. The watch stays 'active' (pure edge-trigger):
+-- it re-fires only on a new false->true transition, not while the condition stays true.
+UPDATE watches SET last_notified_at = now() WHERE id = $1;
+
+-- name: InsertNotification :one
+INSERT INTO notifications (watch_id, channel, payload)
+VALUES ($1, $2, $3)
+RETURNING *;
