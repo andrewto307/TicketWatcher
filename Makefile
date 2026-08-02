@@ -8,9 +8,13 @@ run:
 build:
 	CGO_ENABLED=0 go build -o bin/api ./cmd/api
 
-# Run all tests.
+# Run the fast, hermetic unit tests.
 test:
 	go test ./...
+
+# Run integration tests (needs Postgres: `docker compose up -d db`).
+test-int:
+	go test -tags=integration ./test/...
 
 # Resolve and lock dependencies (creates/updates go.sum). Run this first.
 tidy:
