@@ -86,3 +86,35 @@ UPDATE watches SET last_notified_at = now() WHERE id = $1;
 INSERT INTO notifications (watch_id, channel, payload)
 VALUES ($1, $2, $3)
 RETURNING *;
+
+-- name: GetWatch :one
+SELECT * FROM watches WHERE id = $1 AND user_id = $2;
+
+-- name: ListSnapshotsForEvent :many
+SELECT * FROM price_snapshots WHERE event_id = $1 ORDER BY checked_at ASC;
+
+-- name: UpdateWatch :one
+-- Partial update: NULL args keep the current value. Editing the threshold re-arms
+-- the watch (resets last_evaluation) so the new condition re-establishes its edge.
+UPDATE watches
+SET threshold_cents = COALESCE(sqlc.narg('threshold_cents'), threshold_cents),
+    status          = COALESCE(sqlc.narg('status'), status),
+    last_evaluation = CASE WHEN sqlc.arg('reset_evaluation') THEN false ELSE last_evaluation END
+WHERE id = sqlc.arg('id') AND user_id = sqlc.arg('user_id')
+RETURNING *;
+
+-- name: DeleteWatch :execrows
+DELETE FROM watches WHERE id = $1 AND user_id = $2;
+
+-- name: ListNotificationsForUser :many
+SELECT n.* FROM notifications n
+JOIN watches w ON w.id = n.watch_id
+WHERE w.user_id = $1
+ORDER BY n.sent_at DESC
+LIMIT $2;
+
+-- name: MarkEventDue :exec
+-- Make an event eligible for polling on the next scheduler tick. Called when a
+-- new watch is created so it is evaluated promptly instead of waiting for the
+-- event's next scheduled poll.
+UPDATE events SET next_poll_at = now() WHERE id = $1;

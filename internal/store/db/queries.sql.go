@@ -49,6 +49,23 @@ func (q *Queries) CreateWatch(ctx context.Context, arg CreateWatchParams) (Watch
 	return i, err
 }
 
+const deleteWatch = `-- name: DeleteWatch :execrows
+DELETE FROM watches WHERE id = $1 AND user_id = $2
+`
+
+type DeleteWatchParams struct {
+	ID     int64 `json:"id"`
+	UserID int64 `json:"user_id"`
+}
+
+func (q *Queries) DeleteWatch(ctx context.Context, arg DeleteWatchParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteWatch, arg.ID, arg.UserID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getEvent = `-- name: GetEvent :one
 SELECT id, tm_event_id, name, url, venue, event_date, last_min_price_cents, last_max_price_cents, last_availability, last_polled_at, next_poll_at, created_at FROM events WHERE id = $1
 `
@@ -105,6 +122,33 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 	row := q.db.QueryRow(ctx, getUserByEmail, email)
 	var i User
 	err := row.Scan(&i.ID, &i.Email, &i.CreatedAt)
+	return i, err
+}
+
+const getWatch = `-- name: GetWatch :one
+SELECT id, user_id, event_id, condition_type, threshold_cents, status, last_evaluation, last_notified_at, poll_interval_s, created_at FROM watches WHERE id = $1 AND user_id = $2
+`
+
+type GetWatchParams struct {
+	ID     int64 `json:"id"`
+	UserID int64 `json:"user_id"`
+}
+
+func (q *Queries) GetWatch(ctx context.Context, arg GetWatchParams) (Watch, error) {
+	row := q.db.QueryRow(ctx, getWatch, arg.ID, arg.UserID)
+	var i Watch
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.EventID,
+		&i.ConditionType,
+		&i.ThresholdCents,
+		&i.Status,
+		&i.LastEvaluation,
+		&i.LastNotifiedAt,
+		&i.PollIntervalS,
+		&i.CreatedAt,
+	)
 	return i, err
 }
 
@@ -262,6 +306,76 @@ func (q *Queries) ListDueEvents(ctx context.Context, limit int32) ([]Event, erro
 	return items, nil
 }
 
+const listNotificationsForUser = `-- name: ListNotificationsForUser :many
+SELECT n.id, n.watch_id, n.channel, n.sent_at, n.payload FROM notifications n
+JOIN watches w ON w.id = n.watch_id
+WHERE w.user_id = $1
+ORDER BY n.sent_at DESC
+LIMIT $2
+`
+
+type ListNotificationsForUserParams struct {
+	UserID int64 `json:"user_id"`
+	Limit  int32 `json:"limit"`
+}
+
+func (q *Queries) ListNotificationsForUser(ctx context.Context, arg ListNotificationsForUserParams) ([]Notification, error) {
+	rows, err := q.db.Query(ctx, listNotificationsForUser, arg.UserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Notification{}
+	for rows.Next() {
+		var i Notification
+		if err := rows.Scan(
+			&i.ID,
+			&i.WatchID,
+			&i.Channel,
+			&i.SentAt,
+			&i.Payload,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSnapshotsForEvent = `-- name: ListSnapshotsForEvent :many
+SELECT id, event_id, min_price_cents, max_price_cents, availability_status, checked_at FROM price_snapshots WHERE event_id = $1 ORDER BY checked_at ASC
+`
+
+func (q *Queries) ListSnapshotsForEvent(ctx context.Context, eventID int64) ([]PriceSnapshot, error) {
+	rows, err := q.db.Query(ctx, listSnapshotsForEvent, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []PriceSnapshot{}
+	for rows.Next() {
+		var i PriceSnapshot
+		if err := rows.Scan(
+			&i.ID,
+			&i.EventID,
+			&i.MinPriceCents,
+			&i.MaxPriceCents,
+			&i.AvailabilityStatus,
+			&i.CheckedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWatchesWithEvent = `-- name: ListWatchesWithEvent :many
 SELECT w.id, w.user_id, w.event_id, w.condition_type, w.threshold_cents, w.status, w.last_evaluation, w.last_notified_at, w.poll_interval_s, w.created_at,
        e.tm_event_id,
@@ -338,6 +452,18 @@ func (q *Queries) ListWatchesWithEvent(ctx context.Context, userID int64) ([]Lis
 	return items, nil
 }
 
+const markEventDue = `-- name: MarkEventDue :exec
+UPDATE events SET next_poll_at = now() WHERE id = $1
+`
+
+// Make an event eligible for polling on the next scheduler tick. Called when a
+// new watch is created so it is evaluated promptly instead of waiting for the
+// event's next scheduled poll.
+func (q *Queries) MarkEventDue(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, markEventDue, id)
+	return err
+}
+
 const markNotified = `-- name: MarkNotified :exec
 UPDATE watches SET last_notified_at = now() WHERE id = $1
 `
@@ -405,6 +531,49 @@ func (q *Queries) UpdateEventLatest(ctx context.Context, arg UpdateEventLatestPa
 		arg.NextPollAt,
 	)
 	return err
+}
+
+const updateWatch = `-- name: UpdateWatch :one
+UPDATE watches
+SET threshold_cents = COALESCE($1, threshold_cents),
+    status          = COALESCE($2, status),
+    last_evaluation = CASE WHEN $3 THEN false ELSE last_evaluation END
+WHERE id = $4 AND user_id = $5
+RETURNING id, user_id, event_id, condition_type, threshold_cents, status, last_evaluation, last_notified_at, poll_interval_s, created_at
+`
+
+type UpdateWatchParams struct {
+	ThresholdCents  *int64  `json:"threshold_cents"`
+	Status          *string `json:"status"`
+	ResetEvaluation bool    `json:"reset_evaluation"`
+	ID              int64   `json:"id"`
+	UserID          int64   `json:"user_id"`
+}
+
+// Partial update: NULL args keep the current value. Editing the threshold re-arms
+// the watch (resets last_evaluation) so the new condition re-establishes its edge.
+func (q *Queries) UpdateWatch(ctx context.Context, arg UpdateWatchParams) (Watch, error) {
+	row := q.db.QueryRow(ctx, updateWatch,
+		arg.ThresholdCents,
+		arg.Status,
+		arg.ResetEvaluation,
+		arg.ID,
+		arg.UserID,
+	)
+	var i Watch
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.EventID,
+		&i.ConditionType,
+		&i.ThresholdCents,
+		&i.Status,
+		&i.LastEvaluation,
+		&i.LastNotifiedAt,
+		&i.PollIntervalS,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const upsertEventByTMID = `-- name: UpsertEventByTMID :one

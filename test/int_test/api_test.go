@@ -5,6 +5,7 @@ package inttest
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -29,9 +30,9 @@ func fakeTicketmaster() *httptest.Server {
 	}))
 }
 
-// TestAPI_SearchCreateList drives the real HTTP router + real DB + real client
-// (against the fake upstream): search -> create watch -> list, plus a 400 case.
-func TestAPI_SearchCreateList(t *testing.T) {
+// TestAPI_WatchLifecycle drives the real HTTP router + real DB + real client
+// (against the fake upstream) across every Phase 1–4 endpoint.
+func TestAPI_WatchLifecycle(t *testing.T) {
 	q := setupDB(t)
 	user, err := q.GetUserByEmail(context.Background(), "demo@example.com")
 	if err != nil {
@@ -42,57 +43,98 @@ func TestAPI_SearchCreateList(t *testing.T) {
 	defer tmSrv.Close()
 	tm := ticketmaster.New(tmSrv.URL, "testkey", nil)
 
-	router := httpapi.NewRouter(service.NewSearchService(tm), service.NewWatchService(q, tm, user.ID))
+	router := httpapi.NewRouter(
+		service.NewSearchService(tm),
+		service.NewWatchService(q, tm, user.ID),
+		service.NewNotificationService(q, user.ID),
+	)
 	api := httptest.NewServer(router)
 	defer api.Close()
 
+	get := func(path string) (*http.Response, []map[string]any) {
+		t.Helper()
+		res, err := http.Get(api.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []map[string]any
+		_ = json.NewDecoder(res.Body).Decode(&out)
+		res.Body.Close()
+		return res, out
+	}
+
 	// --- search ---
-	res, err := http.Get(api.URL + "/api/search?q=fake")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.StatusCode != http.StatusOK {
-		t.Fatalf("search status = %d", res.StatusCode)
-	}
-	var found []map[string]any
-	_ = json.NewDecoder(res.Body).Decode(&found)
-	res.Body.Close()
-	if len(found) != 1 || found[0]["name"] != "Fake Fest" {
-		t.Fatalf("search results = %+v", found)
+	if res, found := get("/api/search?q=fake"); res.StatusCode != 200 || len(found) != 1 || found[0]["name"] != "Fake Fest" {
+		t.Fatalf("search: status=%d results=%+v", res.StatusCode, found)
 	}
 
 	// --- create watch ---
-	res, err = http.Post(api.URL+"/api/watches", "application/json",
+	res, err := http.Post(api.URL+"/api/watches", "application/json",
 		strings.NewReader(`{"tm_event_id":"TM999","condition_type":"price_below","threshold":100}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(res.Body)
-		t.Fatalf("create status = %d: %s", res.StatusCode, body)
+		b, _ := io.ReadAll(res.Body)
+		t.Fatalf("create: status=%d body=%s", res.StatusCode, b)
 	}
 	res.Body.Close()
 
-	// --- list watches (reads it back from Postgres, event info joined in) ---
-	res, err = http.Get(api.URL + "/api/watches")
-	if err != nil {
-		t.Fatal(err)
+	// --- list -> capture id ---
+	res, watches := get("/api/watches")
+	if res.StatusCode != 200 || len(watches) != 1 || watches[0]["event_name"] != "Fake Fest" {
+		t.Fatalf("list: status=%d watches=%+v", res.StatusCode, watches)
 	}
-	var watches []map[string]any
-	_ = json.NewDecoder(res.Body).Decode(&watches)
-	res.Body.Close()
-	if len(watches) != 1 || watches[0]["event_name"] != "Fake Fest" {
-		t.Fatalf("watches = %+v", watches)
+	id := int64(watches[0]["id"].(float64))
+
+	// --- history (empty; no poller in this test) ---
+	if res, hist := get(fmt.Sprintf("/api/watches/%d/history", id)); res.StatusCode != 200 || len(hist) != 0 {
+		t.Errorf("history: status=%d, want 200 + empty", res.StatusCode)
 	}
 
-	// --- invalid create -> 400 ---
-	res, err = http.Post(api.URL+"/api/watches", "application/json",
-		strings.NewReader(`{"tm_event_id":"TM999","condition_type":"price_below"}`))
+	// --- notifications (empty) ---
+	if res, notes := get("/api/notifications"); res.StatusCode != 200 || len(notes) != 0 {
+		t.Errorf("notifications: status=%d len=%d, want 200 + empty", res.StatusCode, len(notes))
+	}
+
+	// --- PATCH threshold ---
+	req, _ := http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/api/watches/%d", api.URL, id),
+		strings.NewReader(`{"threshold":200}`))
+	res, err = http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var updated map[string]any
+	_ = json.NewDecoder(res.Body).Decode(&updated)
+	res.Body.Close()
+	if res.StatusCode != 200 || updated["threshold"].(float64) != 200 {
+		t.Errorf("patch: status=%d threshold=%v, want 200 + 200", res.StatusCode, updated["threshold"])
+	}
+
+	// --- PATCH invalid status -> 400 ---
+	req, _ = http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/api/watches/%d", api.URL, id),
+		strings.NewReader(`{"status":"bogus"}`))
+	res, _ = http.DefaultClient.Do(req)
 	if res.StatusCode != http.StatusBadRequest {
-		t.Errorf("missing-threshold create = %d, want 400", res.StatusCode)
+		t.Errorf("patch invalid status = %d, want 400", res.StatusCode)
 	}
 	res.Body.Close()
+
+	// --- DELETE ---
+	req, _ = http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/watches/%d", api.URL, id), nil)
+	res, _ = http.DefaultClient.Do(req)
+	if res.StatusCode != http.StatusNoContent {
+		t.Errorf("delete = %d, want 204", res.StatusCode)
+	}
+	res.Body.Close()
+
+	// --- history on a deleted watch -> 404 ---
+	if res, _ := get(fmt.Sprintf("/api/watches/%d/history", id)); res.StatusCode != http.StatusNotFound {
+		t.Errorf("history after delete = %d, want 404", res.StatusCode)
+	}
+
+	// --- list is now empty ---
+	if _, watches := get("/api/watches"); len(watches) != 0 {
+		t.Errorf("after delete, watches = %d, want 0", len(watches))
+	}
 }

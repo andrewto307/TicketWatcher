@@ -63,6 +63,7 @@ func main() {
 	tm := ticketmaster.New(cfg.TMBaseURL, cfg.TMAPIKey, limiter)
 	searchSvc := service.NewSearchService(tm)
 	watchSvc := service.NewWatchService(q, tm, user.ID)
+	notifSvc := service.NewNotificationService(q, user.ID)
 
 	// Notifications: real email if a Resend key is configured, else log-only.
 	var emailSender notifier.Sender
@@ -86,7 +87,7 @@ func main() {
 	go func() { defer schedWG.Done(); sched.Run(ctx) }()
 
 	// HTTP server.
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.NewRouter(searchSvc, watchSvc)}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.NewRouter(searchSvc, watchSvc, notifSvc)}
 	go func() {
 		log.Printf("api listening on %s", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

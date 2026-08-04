@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -14,7 +15,7 @@ import (
 )
 
 // NewRouter builds the application's HTTP handler.
-func NewRouter(search *service.SearchService, watches *service.WatchService) http.Handler {
+func NewRouter(search *service.SearchService, watches *service.WatchService, notifications *service.NotificationService) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
@@ -22,9 +23,13 @@ func NewRouter(search *service.SearchService, watches *service.WatchService) htt
 	r.Get("/healthz", healthHandler)
 
 	r.Route("/api", func(r chi.Router) {
-		r.Get("/search", searchHandler(search))    // ?q=<keyword>
+		r.Get("/search", searchHandler(search))
 		r.Post("/watches", createWatchHandler(watches))
 		r.Get("/watches", listWatchesHandler(watches))
+		r.Get("/watches/{id}/history", watchHistoryHandler(watches))
+		r.Patch("/watches/{id}", updateWatchHandler(watches))
+		r.Delete("/watches/{id}", deleteWatchHandler(watches))
+		r.Get("/notifications", listNotificationsHandler(notifications))
 	})
 
 	return r
@@ -96,6 +101,98 @@ func listWatchesHandler(watches *service.WatchService) http.HandlerFunc {
 		}
 		writeJSON(w, http.StatusOK, views)
 	}
+}
+
+func watchHistoryHandler(watches *service.WatchService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := watchIDParam(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid watch id")
+			return
+		}
+		hist, err := watches.History(r.Context(), id)
+		if err != nil {
+			handleWatchError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, hist)
+	}
+}
+
+type updateWatchRequest struct {
+	Threshold *float64 `json:"threshold"`
+	Status    *string  `json:"status"`
+}
+
+func updateWatchHandler(watches *service.WatchService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := watchIDParam(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid watch id")
+			return
+		}
+		var req updateWatchRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		view, err := watches.Update(r.Context(), id, service.UpdateWatchInput{Threshold: req.Threshold, Status: req.Status})
+		if err != nil {
+			if errors.Is(err, service.ErrInvalidStatus) {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			handleWatchError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, view)
+	}
+}
+
+func deleteWatchHandler(watches *service.WatchService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, err := watchIDParam(r)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid watch id")
+			return
+		}
+		if err := watches.Delete(r.Context(), id); err != nil {
+			handleWatchError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func listNotificationsHandler(notifications *service.NotificationService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		limit := 50
+		if l := r.URL.Query().Get("limit"); l != "" {
+			if n, err := strconv.Atoi(l); err == nil {
+				limit = n
+			}
+		}
+		views, err := notifications.List(r.Context(), int32(limit))
+		if err != nil {
+			log.Printf("list notifications: %v", err)
+			writeError(w, http.StatusInternalServerError, "could not list notifications")
+			return
+		}
+		writeJSON(w, http.StatusOK, views)
+	}
+}
+
+func watchIDParam(r *http.Request) (int64, error) {
+	return strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+}
+
+func handleWatchError(w http.ResponseWriter, err error) {
+	if errors.Is(err, service.ErrWatchNotFound) {
+		writeError(w, http.StatusNotFound, "watch not found")
+		return
+	}
+	log.Printf("watch handler: %v", err)
+	writeError(w, http.StatusInternalServerError, "internal error")
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

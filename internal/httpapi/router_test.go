@@ -12,7 +12,7 @@ import (
 // Services built with nil deps: these tests only exercise handler paths that
 // return before any DB / Ticketmaster call (validation, bad input, health).
 func testRouter() http.Handler {
-	return NewRouter(service.NewSearchService(nil), service.NewWatchService(nil, nil, 1))
+	return NewRouter(service.NewSearchService(nil), service.NewWatchService(nil, nil, 1), service.NewNotificationService(nil, 1))
 }
 
 func do(t *testing.T, method, target, body string) *httptest.ResponseRecorder {

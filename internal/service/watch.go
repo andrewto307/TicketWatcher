@@ -18,6 +18,8 @@ var (
 	ErrInvalidCondition  = errors.New("condition_type must be 'price_below' or 'becomes_available'")
 	ErrThresholdRequired = errors.New("threshold is required for condition_type 'price_below'")
 	ErrMissingEventID    = errors.New("tm_event_id is required")
+	ErrWatchNotFound     = errors.New("watch not found")
+	ErrInvalidStatus     = errors.New("status must be 'active' or 'paused'")
 )
 
 // Fetcher is the slice of the Ticketmaster client the watch service needs.
@@ -106,6 +108,13 @@ func (s *WatchService) Create(ctx context.Context, in CreateWatchInput) (WatchVi
 	if err != nil {
 		return WatchView{}, fmt.Errorf("create watch: %w", err)
 	}
+
+	// Make the event due now so the scheduler evaluates this new watch on its next
+	// tick (~15s), instead of waiting for the event's next scheduled poll (which can
+	// be up to poll_interval_s away if the event was already being tracked).
+	// Best-effort: a failure here only delays the first evaluation, so don't fail the create.
+	_ = s.q.MarkEventDue(ctx, ev.ID)
+
 	return watchViewFromEvent(w, ev), nil
 }
 
@@ -120,6 +129,83 @@ func (s *WatchService) List(ctx context.Context) ([]WatchView, error) {
 		out = append(out, watchViewFromRow(r))
 	}
 	return out, nil
+}
+
+// SnapshotView is one point of an event's price history (dollars).
+type SnapshotView struct {
+	MinPrice     *float64  `json:"min_price"`
+	MaxPrice     *float64  `json:"max_price"`
+	Availability *string   `json:"availability"`
+	CheckedAt    time.Time `json:"checked_at"`
+}
+
+// History returns the price-history snapshots for a watch's event.
+func (s *WatchService) History(ctx context.Context, watchID int64) ([]SnapshotView, error) {
+	w, err := s.q.GetWatch(ctx, db.GetWatchParams{ID: watchID, UserID: s.userID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrWatchNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	snaps, err := s.q.ListSnapshotsForEvent(ctx, w.EventID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SnapshotView, 0, len(snaps))
+	for _, sp := range snaps {
+		out = append(out, SnapshotView{
+			MinPrice:     money.ToDollars(sp.MinPriceCents),
+			MaxPrice:     money.ToDollars(sp.MaxPriceCents),
+			Availability: sp.AvailabilityStatus,
+			CheckedAt:    sp.CheckedAt.Time,
+		})
+	}
+	return out, nil
+}
+
+// UpdateWatchInput is a partial update; nil fields are left unchanged.
+type UpdateWatchInput struct {
+	Threshold *float64 // dollars
+	Status    *string  // "active" | "paused"
+}
+
+// Update edits a watch's threshold and/or status. Changing the threshold re-arms
+// the watch (resets last_evaluation) so the new condition re-establishes its edge.
+func (s *WatchService) Update(ctx context.Context, watchID int64, in UpdateWatchInput) (WatchView, error) {
+	if in.Status != nil && *in.Status != "active" && *in.Status != "paused" {
+		return WatchView{}, ErrInvalidStatus
+	}
+	w, err := s.q.UpdateWatch(ctx, db.UpdateWatchParams{
+		ID:              watchID,
+		UserID:          s.userID,
+		ThresholdCents:  money.ToCents(in.Threshold),
+		Status:          in.Status,
+		ResetEvaluation: in.Threshold != nil,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return WatchView{}, ErrWatchNotFound
+	}
+	if err != nil {
+		return WatchView{}, err
+	}
+	ev, err := s.q.GetEvent(ctx, w.EventID)
+	if err != nil {
+		return WatchView{}, err
+	}
+	return watchViewFromEvent(w, ev), nil
+}
+
+// Delete removes a watch owned by the user.
+func (s *WatchService) Delete(ctx context.Context, watchID int64) error {
+	n, err := s.q.DeleteWatch(ctx, db.DeleteWatchParams{ID: watchID, UserID: s.userID})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrWatchNotFound
+	}
+	return nil
 }
 
 func watchViewFromEvent(w db.Watch, ev db.Event) WatchView {
