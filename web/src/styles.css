@@ -130,3 +130,23 @@ input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 
 }
 .notif-subject { flex: 1; min-width: 200px; }
 .notif-time { font-size: 0.82rem; }
+
+/* header with logout */
+.app-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.logout { align-self: center; white-space: nowrap; }
+
+/* auth screen */
+.auth-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+.auth-card {
+  width: 100%; max-width: 360px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: 14px; padding: 28px; box-shadow: var(--shadow); text-align: center;
+}
+.auth-card h1 { margin: 0 0 4px; font-size: 1.4rem; }
+.auth-card .tagline { margin: 0 0 18px; }
+.auth-form { display: flex; flex-direction: column; gap: 10px; text-align: left; }
+.auth-form input { width: 100%; }
+.auth-form button[type="submit"] {
+  margin-top: 4px; background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
+  padding: 9px; font-weight: 600;
+}
+.auth-card .link { margin-top: 14px; }

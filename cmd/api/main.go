@@ -25,8 +25,6 @@ import (
 	"ticket-watcher/internal/worker"
 )
 
-const demoUserEmail = "demo@example.com"
-
 func main() {
 	// Load .env for local dev; ignored in Docker where env comes from env_file.
 	_ = godotenv.Load()
@@ -51,19 +49,15 @@ func main() {
 	defer pool.Close()
 	q := db.New(pool)
 
-	user, err := q.GetUserByEmail(ctx, demoUserEmail)
-	if err != nil {
-		log.Fatalf("resolve demo user (did migrations seed it?): %v", err)
-	}
-
 	// Shared rate limiter: per-second token bucket + per-class daily quota.
 	quota := ratelimit.NewDailyQuota(cfg.DailyBudgetPoll, cfg.DailyBudgetSearch)
 	limiter := ratelimit.New(cfg.RatePerSec, cfg.RateBurst, quota)
 
 	tm := ticketmaster.New(cfg.TMBaseURL, cfg.TMAPIKey, limiter)
+	authSvc := service.NewAuthService(q, cfg.JWTSecret, cfg.JWTTTL)
 	searchSvc := service.NewSearchService(tm)
-	watchSvc := service.NewWatchService(q, tm, user.ID)
-	notifSvc := service.NewNotificationService(q, user.ID)
+	watchSvc := service.NewWatchService(q, tm)
+	notifSvc := service.NewNotificationService(q)
 
 	// Notifications: real email if a Resend key is configured, else log-only.
 	var emailSender notifier.Sender
@@ -87,7 +81,7 @@ func main() {
 	go func() { defer schedWG.Done(); sched.Run(ctx) }()
 
 	// HTTP server.
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.NewRouter(searchSvc, watchSvc, notifSvc)}
+	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.NewRouter(authSvc, searchSvc, watchSvc, notifSvc, cfg.JWTSecret)}
 	go func() {
 		log.Printf("api listening on %s", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

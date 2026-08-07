@@ -3,7 +3,6 @@
 package inttest
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"ticket-watcher/internal/httpapi"
 	"ticket-watcher/internal/service"
@@ -30,80 +30,109 @@ func fakeTicketmaster() *httptest.Server {
 	}))
 }
 
-// TestAPI_WatchLifecycle drives the real HTTP router + real DB + real client
-// (against the fake upstream) across every Phase 1–4 endpoint.
-func TestAPI_WatchLifecycle(t *testing.T) {
+// TestAPI_AuthAndWatchLifecycle drives the real HTTP router + real DB + real
+// client (fake upstream) through register → authed CRUD across every endpoint,
+// plus the 401 path.
+func TestAPI_AuthAndWatchLifecycle(t *testing.T) {
 	q := setupDB(t)
-	user, err := q.GetUserByEmail(context.Background(), "demo@example.com")
-	if err != nil {
-		t.Fatalf("user: %v", err)
-	}
 
 	tmSrv := fakeTicketmaster()
 	defer tmSrv.Close()
 	tm := ticketmaster.New(tmSrv.URL, "testkey", nil)
 
+	const secret = "int-test-secret"
 	router := httpapi.NewRouter(
+		service.NewAuthService(q, secret, time.Hour),
 		service.NewSearchService(tm),
-		service.NewWatchService(q, tm, user.ID),
-		service.NewNotificationService(q, user.ID),
+		service.NewWatchService(q, tm),
+		service.NewNotificationService(q),
+		secret,
 	)
 	api := httptest.NewServer(router)
 	defer api.Close()
 
-	get := func(path string) (*http.Response, []map[string]any) {
+	// authed request helper
+	req := func(method, path, token, body string) *http.Response {
 		t.Helper()
-		res, err := http.Get(api.URL + path)
+		var r io.Reader
+		if body != "" {
+			r = strings.NewReader(body)
+		}
+		hr, _ := http.NewRequest(method, api.URL+path, r)
+		if body != "" {
+			hr.Header.Set("Content-Type", "application/json")
+		}
+		if token != "" {
+			hr.Header.Set("Authorization", "Bearer "+token)
+		}
+		res, err := http.DefaultClient.Do(hr)
 		if err != nil {
 			t.Fatal(err)
 		}
+		return res
+	}
+	decode := func(res *http.Response) []map[string]any {
 		var out []map[string]any
 		_ = json.NewDecoder(res.Body).Decode(&out)
 		res.Body.Close()
-		return res, out
+		return out
+	}
+
+	// --- protected route without a token -> 401 ---
+	if res := req(http.MethodGet, "/api/watches", "", ""); res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("no token = %d, want 401", res.StatusCode)
+	}
+
+	// --- register -> token ---
+	res := req(http.MethodPost, "/api/auth/register", "", `{"email":"user@example.com","password":"password123"}`)
+	if res.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(res.Body)
+		t.Fatalf("register: %d: %s", res.StatusCode, b)
+	}
+	var reg map[string]string
+	_ = json.NewDecoder(res.Body).Decode(&reg)
+	res.Body.Close()
+	token := reg["token"]
+	if token == "" {
+		t.Fatal("register returned no token")
 	}
 
 	// --- search ---
-	if res, found := get("/api/search?q=fake"); res.StatusCode != 200 || len(found) != 1 || found[0]["name"] != "Fake Fest" {
-		t.Fatalf("search: status=%d results=%+v", res.StatusCode, found)
+	if res, found := req(http.MethodGet, "/api/search?q=fake", token, ""), []map[string]any(nil); true {
+		found = decode(res)
+		if res.StatusCode != 200 || len(found) != 1 || found[0]["name"] != "Fake Fest" {
+			t.Fatalf("search: status=%d results=%+v", res.StatusCode, found)
+		}
 	}
 
 	// --- create watch ---
-	res, err := http.Post(api.URL+"/api/watches", "application/json",
-		strings.NewReader(`{"tm_event_id":"TM999","condition_type":"price_below","threshold":100}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.StatusCode != http.StatusCreated {
+	if res := req(http.MethodPost, "/api/watches", token, `{"tm_event_id":"TM999","condition_type":"price_below","threshold":100}`); res.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(res.Body)
 		t.Fatalf("create: status=%d body=%s", res.StatusCode, b)
+	} else {
+		res.Body.Close()
 	}
-	res.Body.Close()
 
 	// --- list -> capture id ---
-	res, watches := get("/api/watches")
-	if res.StatusCode != 200 || len(watches) != 1 || watches[0]["event_name"] != "Fake Fest" {
-		t.Fatalf("list: status=%d watches=%+v", res.StatusCode, watches)
+	watches := decode(req(http.MethodGet, "/api/watches", token, ""))
+	if len(watches) != 1 || watches[0]["event_name"] != "Fake Fest" {
+		t.Fatalf("list watches = %+v", watches)
 	}
 	id := int64(watches[0]["id"].(float64))
 
-	// --- history (empty; no poller in this test) ---
-	if res, hist := get(fmt.Sprintf("/api/watches/%d/history", id)); res.StatusCode != 200 || len(hist) != 0 {
-		t.Errorf("history: status=%d, want 200 + empty", res.StatusCode)
+	// --- history (empty) + notifications (empty) ---
+	if res, hist := req(http.MethodGet, fmt.Sprintf("/api/watches/%d/history", id), token, ""), []map[string]any(nil); true {
+		hist = decode(res)
+		if res.StatusCode != 200 || len(hist) != 0 {
+			t.Errorf("history: status=%d len=%d, want 200 + empty", res.StatusCode, len(hist))
+		}
 	}
-
-	// --- notifications (empty) ---
-	if res, notes := get("/api/notifications"); res.StatusCode != 200 || len(notes) != 0 {
-		t.Errorf("notifications: status=%d len=%d, want 200 + empty", res.StatusCode, len(notes))
+	if notes := decode(req(http.MethodGet, "/api/notifications", token, "")); len(notes) != 0 {
+		t.Errorf("notifications len=%d, want 0", len(notes))
 	}
 
 	// --- PATCH threshold ---
-	req, _ := http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/api/watches/%d", api.URL, id),
-		strings.NewReader(`{"threshold":200}`))
-	res, err = http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	res = req(http.MethodPatch, fmt.Sprintf("/api/watches/%d", id), token, `{"threshold":200}`)
 	var updated map[string]any
 	_ = json.NewDecoder(res.Body).Decode(&updated)
 	res.Body.Close()
@@ -112,29 +141,23 @@ func TestAPI_WatchLifecycle(t *testing.T) {
 	}
 
 	// --- PATCH invalid status -> 400 ---
-	req, _ = http.NewRequest(http.MethodPatch, fmt.Sprintf("%s/api/watches/%d", api.URL, id),
-		strings.NewReader(`{"status":"bogus"}`))
-	res, _ = http.DefaultClient.Do(req)
-	if res.StatusCode != http.StatusBadRequest {
+	if res := req(http.MethodPatch, fmt.Sprintf("/api/watches/%d", id), token, `{"status":"bogus"}`); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("patch invalid status = %d, want 400", res.StatusCode)
+	} else {
+		res.Body.Close()
 	}
-	res.Body.Close()
 
-	// --- DELETE ---
-	req, _ = http.NewRequest(http.MethodDelete, fmt.Sprintf("%s/api/watches/%d", api.URL, id), nil)
-	res, _ = http.DefaultClient.Do(req)
-	if res.StatusCode != http.StatusNoContent {
+	// --- DELETE -> 204, then history 404, then empty list ---
+	if res := req(http.MethodDelete, fmt.Sprintf("/api/watches/%d", id), token, ""); res.StatusCode != http.StatusNoContent {
 		t.Errorf("delete = %d, want 204", res.StatusCode)
+	} else {
+		res.Body.Close()
 	}
-	res.Body.Close()
-
-	// --- history on a deleted watch -> 404 ---
-	if res, _ := get(fmt.Sprintf("/api/watches/%d/history", id)); res.StatusCode != http.StatusNotFound {
+	if res := req(http.MethodGet, fmt.Sprintf("/api/watches/%d/history", id), token, ""); res.StatusCode != http.StatusNotFound {
 		t.Errorf("history after delete = %d, want 404", res.StatusCode)
+		res.Body.Close()
 	}
-
-	// --- list is now empty ---
-	if _, watches := get("/api/watches"); len(watches) != 0 {
+	if watches := decode(req(http.MethodGet, "/api/watches", token, "")); len(watches) != 0 {
 		t.Errorf("after delete, watches = %d, want 0", len(watches))
 	}
 }

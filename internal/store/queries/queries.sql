@@ -1,6 +1,12 @@
 -- name: GetUserByEmail :one
 SELECT * FROM users WHERE email = $1;
 
+-- name: GetUserByID :one
+SELECT * FROM users WHERE id = $1;
+
+-- name: CreateUser :one
+INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING *;
+
 -- name: UpsertEventByTMID :one
 INSERT INTO events (tm_event_id, name, url, venue, event_date)
 VALUES ($1, $2, $3, $4, $5)

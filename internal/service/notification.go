@@ -8,14 +8,14 @@ import (
 	"ticket-watcher/internal/store/db"
 )
 
-// NotificationService lists a user's sent-alert log.
+// NotificationService lists a user's sent-alert log. The user id is supplied per
+// call by the HTTP layer (from the authenticated token).
 type NotificationService struct {
-	q      *db.Queries
-	userID int64
+	q *db.Queries
 }
 
-func NewNotificationService(q *db.Queries, userID int64) *NotificationService {
-	return &NotificationService{q: q, userID: userID}
+func NewNotificationService(q *db.Queries) *NotificationService {
+	return &NotificationService{q: q}
 }
 
 // NotificationView is the API representation of a sent notification.
@@ -28,11 +28,11 @@ type NotificationView struct {
 }
 
 // List returns the user's notifications, newest first (capped).
-func (s *NotificationService) List(ctx context.Context, limit int32) ([]NotificationView, error) {
+func (s *NotificationService) List(ctx context.Context, userID int64, limit int32) ([]NotificationView, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	rows, err := s.q.ListNotificationsForUser(ctx, db.ListNotificationsForUserParams{UserID: s.userID, Limit: limit})
+	rows, err := s.q.ListNotificationsForUser(ctx, db.ListNotificationsForUserParams{UserID: userID, Limit: limit})
 	if err != nil {
 		return nil, err
 	}

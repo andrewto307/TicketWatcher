@@ -37,8 +37,8 @@ func TestWatchService_CreateMarksEventDue(t *testing.T) {
 
 	// nil Ticketmaster client is safe here: the event already exists, so Create
 	// resolves it from the DB and never calls the API.
-	svc := service.NewWatchService(q, nil, user.ID)
-	if _, err := svc.Create(ctx, service.CreateWatchInput{TMEventID: "TMDUE", ConditionType: "becomes_available"}); err != nil {
+	svc := service.NewWatchService(q, nil)
+	if _, err := svc.Create(ctx, user.ID, service.CreateWatchInput{TMEventID: "TMDUE", ConditionType: "becomes_available"}); err != nil {
 		t.Fatalf("create watch: %v", err)
 	}
 
