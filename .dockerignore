@@ -1,0 +1,15 @@
+# Keep the Docker build context small and reproducible. The SPA is built fresh
+# in the `web` stage, so never ship the local node_modules or dist.
+.git
+.gitignore
+node_modules
+web/node_modules
+web/dist
+bin
+out
+*.exe
+.env
+.env.*
+plan
+raw.md
+*.md

@@ -5,10 +5,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
+
 	"ticket-watcher/internal/notifier"
+	"ticket-watcher/internal/store"
 	"ticket-watcher/internal/store/db"
 	"ticket-watcher/internal/ticketmaster"
 )
+
+// verified marks a fixture watch's owner as having confirmed their address —
+// the precondition for any alert being sent.
+func verified() pgtype.Timestamptz { return store.TS(time.Now()) }
 
 // --- stateful fakes ---
 
@@ -71,7 +78,8 @@ func TestProcessEvent_EdgeTriggered(t *testing.T) {
 	st := &fakeStore{
 		event: db.Event{ID: 1, TmEventID: "x", Name: "Test"},
 		watch: db.ListActiveWatchesForEventRow{
-			ID: 1, ConditionType: "price_below", ThresholdCents: &thr, Status: "active", UserEmail: "u@e.com",
+			ID: 1, ConditionType: "price_below", ThresholdCents: &thr, Status: "active",
+			UserEmail: "u@e.com", EmailVerifiedAt: verified(),
 		},
 	}
 	fetch := &fakeFetcher{avail: "onsale"}
@@ -109,7 +117,10 @@ func TestProcessEvent_NeverTrue(t *testing.T) {
 	thr := int64(1000) // $10.00 — well below the polled price
 	st := &fakeStore{
 		event: db.Event{ID: 1, TmEventID: "x", Name: "Test"},
-		watch: db.ListActiveWatchesForEventRow{ID: 1, ConditionType: "price_below", ThresholdCents: &thr, Status: "active", UserEmail: "u@e.com"},
+		watch: db.ListActiveWatchesForEventRow{
+			ID: 1, ConditionType: "price_below", ThresholdCents: &thr, Status: "active",
+			UserEmail: "u@e.com", EmailVerifiedAt: verified(),
+		},
 	}
 	fetch := &fakeFetcher{min: usd(288.69), avail: "onsale"}
 	notif := &fakeNotifier{}
@@ -122,5 +133,35 @@ func TestProcessEvent_NeverTrue(t *testing.T) {
 	}
 	if notif.calls != 0 {
 		t.Errorf("notifier calls = %d, want 0 (condition never met)", notif.calls)
+	}
+}
+
+// TestProcessEvent_UnverifiedEmailIsNotAlerted covers the Tier 1 rule: a met
+// condition must not mail an address whose owner never confirmed it. The watch
+// still tracks its evaluation, so it stays armed for after they verify.
+func TestProcessEvent_UnverifiedEmailIsNotAlerted(t *testing.T) {
+	thr := int64(20000) // $200.00
+	st := &fakeStore{
+		event: db.Event{ID: 1, TmEventID: "x", Name: "Test"},
+		watch: db.ListActiveWatchesForEventRow{
+			ID: 1, ConditionType: "price_below", ThresholdCents: &thr, Status: "active",
+			UserEmail: "unverified@e.com", // EmailVerifiedAt left zero => NULL => unverified
+		},
+	}
+	fetch := &fakeFetcher{min: usd(180), avail: "onsale"} // condition is met
+	notif := &fakeNotifier{}
+	deps := Deps{Store: st, TM: fetch, Notifier: notif, Now: time.Now}
+
+	if err := ProcessEvent(context.Background(), 1, deps); err != nil {
+		t.Fatal(err)
+	}
+	if notif.calls != 0 {
+		t.Errorf("notifier calls = %d, want 0 (owner is unverified)", notif.calls)
+	}
+	if st.marked != 0 {
+		t.Errorf("MarkNotified called %d times, want 0 (nothing was sent)", st.marked)
+	}
+	if !st.watch.LastEvaluation {
+		t.Error("last_evaluation = false, want true (the watch must still track the edge)")
 	}
 }

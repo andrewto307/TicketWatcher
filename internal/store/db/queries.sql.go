@@ -11,8 +11,53 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countWatchesForUser = `-- name: CountWatchesForUser :one
+SELECT count(*) FROM watches WHERE user_id = $1
+`
+
+func (q *Queries) CountWatchesForUser(ctx context.Context, userID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countWatchesForUser, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const createAuthToken = `-- name: CreateAuthToken :one
+INSERT INTO auth_tokens (user_id, token_hash, purpose, expires_at)
+VALUES ($1, $2, $3, $4)
+RETURNING id, user_id, token_hash, purpose, expires_at, used_at, created_at
+`
+
+type CreateAuthTokenParams struct {
+	UserID    int64              `json:"user_id"`
+	TokenHash string             `json:"token_hash"`
+	Purpose   string             `json:"purpose"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+}
+
+// token_hash is the SHA-256 of the token we emailed; the raw value is never stored.
+func (q *Queries) CreateAuthToken(ctx context.Context, arg CreateAuthTokenParams) (AuthToken, error) {
+	row := q.db.QueryRow(ctx, createAuthToken,
+		arg.UserID,
+		arg.TokenHash,
+		arg.Purpose,
+		arg.ExpiresAt,
+	)
+	var i AuthToken
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.TokenHash,
+		&i.Purpose,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, created_at, password_hash
+INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, created_at, password_hash, email_verified_at
 `
 
 type CreateUserParams struct {
@@ -28,6 +73,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Email,
 		&i.CreatedAt,
 		&i.PasswordHash,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
@@ -68,6 +114,22 @@ func (q *Queries) CreateWatch(ctx context.Context, arg CreateWatchParams) (Watch
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const deleteAuthTokensForUser = `-- name: DeleteAuthTokensForUser :exec
+DELETE FROM auth_tokens WHERE user_id = $1 AND purpose = $2
+`
+
+type DeleteAuthTokensForUserParams struct {
+	UserID  int64  `json:"user_id"`
+	Purpose string `json:"purpose"`
+}
+
+// Invalidate outstanding tokens of one purpose: called when issuing a new one and
+// after a successful redemption, so an old link in an inbox can't be replayed.
+func (q *Queries) DeleteAuthTokensForUser(ctx context.Context, arg DeleteAuthTokensForUserParams) error {
+	_, err := q.db.Exec(ctx, deleteAuthTokensForUser, arg.UserID, arg.Purpose)
+	return err
 }
 
 const deleteWatch = `-- name: DeleteWatch :execrows
@@ -136,7 +198,7 @@ func (q *Queries) GetEventByTMID(ctx context.Context, tmEventID string) (Event, 
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, created_at, password_hash FROM users WHERE email = $1
+SELECT id, email, created_at, password_hash, email_verified_at FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -147,12 +209,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.Email,
 		&i.CreatedAt,
 		&i.PasswordHash,
+		&i.EmailVerifiedAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, created_at, password_hash FROM users WHERE id = $1
+SELECT id, email, created_at, password_hash, email_verified_at FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
@@ -163,6 +226,37 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.Email,
 		&i.CreatedAt,
 		&i.PasswordHash,
+		&i.EmailVerifiedAt,
+	)
+	return i, err
+}
+
+const getValidAuthToken = `-- name: GetValidAuthToken :one
+SELECT id, user_id, token_hash, purpose, expires_at, used_at, created_at FROM auth_tokens
+WHERE token_hash = $1
+  AND purpose    = $2
+  AND used_at   IS NULL
+  AND expires_at > now()
+`
+
+type GetValidAuthTokenParams struct {
+	TokenHash string `json:"token_hash"`
+	Purpose   string `json:"purpose"`
+}
+
+// Redeemable only while unused and unexpired, so lookup failure is indistinguishable
+// between "wrong", "already used", and "expired" — nothing leaks to the caller.
+func (q *Queries) GetValidAuthToken(ctx context.Context, arg GetValidAuthTokenParams) (AuthToken, error) {
+	row := q.db.QueryRow(ctx, getValidAuthToken, arg.TokenHash, arg.Purpose)
+	var i AuthToken
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.TokenHash,
+		&i.Purpose,
+		&i.ExpiresAt,
+		&i.UsedAt,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -252,27 +346,29 @@ func (q *Queries) InsertPriceSnapshot(ctx context.Context, arg InsertPriceSnapsh
 }
 
 const listActiveWatchesForEvent = `-- name: ListActiveWatchesForEvent :many
-SELECT w.id, w.user_id, w.event_id, w.condition_type, w.threshold_cents, w.status, w.last_evaluation, w.last_notified_at, w.poll_interval_s, w.created_at, u.email AS user_email
+SELECT w.id, w.user_id, w.event_id, w.condition_type, w.threshold_cents, w.status, w.last_evaluation, w.last_notified_at, w.poll_interval_s, w.created_at, u.email AS user_email, u.email_verified_at
 FROM watches w
 JOIN users u ON u.id = w.user_id
 WHERE w.event_id = $1 AND w.status = 'active'
 `
 
 type ListActiveWatchesForEventRow struct {
-	ID             int64              `json:"id"`
-	UserID         int64              `json:"user_id"`
-	EventID        int64              `json:"event_id"`
-	ConditionType  string             `json:"condition_type"`
-	ThresholdCents *int64             `json:"threshold_cents"`
-	Status         string             `json:"status"`
-	LastEvaluation bool               `json:"last_evaluation"`
-	LastNotifiedAt pgtype.Timestamptz `json:"last_notified_at"`
-	PollIntervalS  int32              `json:"poll_interval_s"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UserEmail      string             `json:"user_email"`
+	ID              int64              `json:"id"`
+	UserID          int64              `json:"user_id"`
+	EventID         int64              `json:"event_id"`
+	ConditionType   string             `json:"condition_type"`
+	ThresholdCents  *int64             `json:"threshold_cents"`
+	Status          string             `json:"status"`
+	LastEvaluation  bool               `json:"last_evaluation"`
+	LastNotifiedAt  pgtype.Timestamptz `json:"last_notified_at"`
+	PollIntervalS   int32              `json:"poll_interval_s"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UserEmail       string             `json:"user_email"`
+	EmailVerifiedAt pgtype.Timestamptz `json:"email_verified_at"`
 }
 
-// Includes the owner's email so the notifier can address the alert.
+// Includes the owner's email so the notifier can address the alert, and their
+// verification state so the worker can skip mailing unconfirmed addresses.
 func (q *Queries) ListActiveWatchesForEvent(ctx context.Context, eventID int64) ([]ListActiveWatchesForEventRow, error) {
 	rows, err := q.db.Query(ctx, listActiveWatchesForEvent, eventID)
 	if err != nil {
@@ -294,6 +390,7 @@ func (q *Queries) ListActiveWatchesForEvent(ctx context.Context, eventID int64) 
 			&i.PollIntervalS,
 			&i.CreatedAt,
 			&i.UserEmail,
+			&i.EmailVerifiedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -494,6 +591,24 @@ func (q *Queries) ListWatchesWithEvent(ctx context.Context, userID int64) ([]Lis
 	return items, nil
 }
 
+const markAuthTokenUsed = `-- name: MarkAuthTokenUsed :exec
+UPDATE auth_tokens SET used_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkAuthTokenUsed(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, markAuthTokenUsed, id)
+	return err
+}
+
+const markEmailVerified = `-- name: MarkEmailVerified :exec
+UPDATE users SET email_verified_at = now() WHERE id = $1
+`
+
+func (q *Queries) MarkEmailVerified(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, markEmailVerified, id)
+	return err
+}
+
 const markEventDue = `-- name: MarkEventDue :exec
 UPDATE events SET next_poll_at = now() WHERE id = $1
 `
@@ -572,6 +687,20 @@ func (q *Queries) UpdateEventLatest(ctx context.Context, arg UpdateEventLatestPa
 		arg.LastAvailability,
 		arg.NextPollAt,
 	)
+	return err
+}
+
+const updateUserPassword = `-- name: UpdateUserPassword :exec
+UPDATE users SET password_hash = $2 WHERE id = $1
+`
+
+type UpdateUserPasswordParams struct {
+	ID           int64  `json:"id"`
+	PasswordHash string `json:"password_hash"`
+}
+
+func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPasswordParams) error {
+	_, err := q.db.Exec(ctx, updateUserPassword, arg.ID, arg.PasswordHash)
 	return err
 }
 

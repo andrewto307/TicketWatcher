@@ -9,7 +9,7 @@ import (
 // Create validates its input before touching the DB or Ticketmaster, so the
 // validation branches are testable with nil dependencies.
 func TestWatchService_CreateValidation(t *testing.T) {
-	s := NewWatchService(nil, nil)
+	s := NewWatchService(nil, nil, 0)
 	thr := 100.0
 
 	tests := []struct {

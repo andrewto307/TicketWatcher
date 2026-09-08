@@ -7,6 +7,38 @@ SELECT * FROM users WHERE id = $1;
 -- name: CreateUser :one
 INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING *;
 
+-- name: MarkEmailVerified :exec
+UPDATE users SET email_verified_at = now() WHERE id = $1;
+
+-- name: UpdateUserPassword :exec
+UPDATE users SET password_hash = $2 WHERE id = $1;
+
+-- name: CreateAuthToken :one
+-- token_hash is the SHA-256 of the token we emailed; the raw value is never stored.
+INSERT INTO auth_tokens (user_id, token_hash, purpose, expires_at)
+VALUES ($1, $2, $3, $4)
+RETURNING *;
+
+-- name: GetValidAuthToken :one
+-- Redeemable only while unused and unexpired, so lookup failure is indistinguishable
+-- between "wrong", "already used", and "expired" — nothing leaks to the caller.
+SELECT * FROM auth_tokens
+WHERE token_hash = $1
+  AND purpose    = $2
+  AND used_at   IS NULL
+  AND expires_at > now();
+
+-- name: MarkAuthTokenUsed :exec
+UPDATE auth_tokens SET used_at = now() WHERE id = $1;
+
+-- name: DeleteAuthTokensForUser :exec
+-- Invalidate outstanding tokens of one purpose: called when issuing a new one and
+-- after a successful redemption, so an old link in an inbox can't be replayed.
+DELETE FROM auth_tokens WHERE user_id = $1 AND purpose = $2;
+
+-- name: CountWatchesForUser :one
+SELECT count(*) FROM watches WHERE user_id = $1;
+
 -- name: UpsertEventByTMID :one
 INSERT INTO events (tm_event_id, name, url, venue, event_date)
 VALUES ($1, $2, $3, $4, $5)
@@ -58,8 +90,9 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: ListActiveWatchesForEvent :many
--- Includes the owner's email so the notifier can address the alert.
-SELECT w.*, u.email AS user_email
+-- Includes the owner's email so the notifier can address the alert, and their
+-- verification state so the worker can skip mailing unconfirmed addresses.
+SELECT w.*, u.email AS user_email, u.email_verified_at
 FROM watches w
 JOIN users u ON u.id = w.user_id
 WHERE w.event_id = $1 AND w.status = 'active';

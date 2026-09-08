@@ -8,6 +8,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type AuthToken struct {
+	ID        int64              `json:"id"`
+	UserID    int64              `json:"user_id"`
+	TokenHash string             `json:"token_hash"`
+	Purpose   string             `json:"purpose"`
+	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	UsedAt    pgtype.Timestamptz `json:"used_at"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
 type Event struct {
 	ID                int64              `json:"id"`
 	TmEventID         string             `json:"tm_event_id"`
@@ -41,10 +51,11 @@ type PriceSnapshot struct {
 }
 
 type User struct {
-	ID           int64              `json:"id"`
-	Email        string             `json:"email"`
-	CreatedAt    pgtype.Timestamptz `json:"created_at"`
-	PasswordHash string             `json:"password_hash"`
+	ID              int64              `json:"id"`
+	Email           string             `json:"email"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	PasswordHash    string             `json:"password_hash"`
+	EmailVerifiedAt pgtype.Timestamptz `json:"email_verified_at"`
 }
 
 type Watch struct {

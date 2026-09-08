@@ -4,25 +4,34 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log"
 	"net/http"
+	"path"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 
 	"ticket-watcher/internal/auth"
+	"ticket-watcher/internal/ratelimit"
 	"ticket-watcher/internal/service"
 )
 
-// NewRouter builds the application's HTTP handler. Auth endpoints are public;
-// everything else requires a valid Bearer token (jwtSecret verifies it).
+// NewRouter builds the application's HTTP handler. Auth endpoints are public but
+// rate-limited per IP; everything else under /api requires a valid Bearer token
+// (jwtSecret verifies it). If staticFS is non-nil it serves the embedded SPA on
+// all other paths (with an index.html fallback for client-side routing); pass nil
+// in tests. A nil authLimiter disables inbound throttling (tests only).
 func NewRouter(
 	authSvc *service.AuthService,
 	search *service.SearchService,
 	watches *service.WatchService,
 	notifications *service.NotificationService,
 	jwtSecret string,
+	authLimiter *ratelimit.IPLimiter,
+	staticFS fs.FS,
 ) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -31,13 +40,25 @@ func NewRouter(
 	r.Get("/healthz", healthHandler)
 
 	r.Route("/api", func(r chi.Router) {
-		// Public.
-		r.Post("/auth/register", registerHandler(authSvc))
-		r.Post("/auth/login", loginHandler(authSvc))
+		// Public, and the most abusable surface in the app: unauthenticated,
+		// password-guessable, and email-sending. Everything here is throttled.
+		r.Group(func(r chi.Router) {
+			if authLimiter != nil {
+				r.Use(rateLimit(authLimiter))
+			}
+			r.Post("/auth/register", registerHandler(authSvc))
+			r.Post("/auth/login", loginHandler(authSvc))
+			r.Post("/auth/forgot", forgotPasswordHandler(authSvc))
+			r.Post("/auth/reset", resetPasswordHandler(authSvc))
+			// GET so the link works straight from an email client.
+			r.Get("/auth/verify", verifyEmailHandler(authSvc))
+		})
 
 		// Authenticated.
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Middleware(jwtSecret))
+			r.Get("/me", meHandler(authSvc))
+			r.Post("/auth/verify/resend", resendVerificationHandler(authSvc))
 			r.Get("/search", searchHandler(search))
 			r.Post("/watches", createWatchHandler(watches))
 			r.Get("/watches", listWatchesHandler(watches))
@@ -48,7 +69,37 @@ func NewRouter(
 		})
 	})
 
+	// Serve the embedded SPA for everything else. Unknown /api/* paths still
+	// 404 as JSON via the sub-router above; they never reach here.
+	if staticFS != nil {
+		r.Handle("/*", spaHandler(staticFS))
+	}
+
 	return r
+}
+
+// spaHandler serves the embedded single-page app. Real files (JS/CSS/assets)
+// are served directly; any other path falls back to index.html so client-side
+// routing works on deep links and refreshes.
+func spaHandler(dist fs.FS) http.HandlerFunc {
+	fileServer := http.FileServer(http.FS(dist))
+	index, _ := fs.ReadFile(dist, "index.html")
+	return func(w http.ResponseWriter, r *http.Request) {
+		name := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+		if name != "." {
+			if f, err := dist.Open(name); err == nil {
+				f.Close()
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+		if index == nil {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(index)
+	}
 }
 
 func healthHandler(w http.ResponseWriter, _ *http.Request) {
@@ -100,11 +151,94 @@ func handleAuthError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, service.ErrInvalidCredentials):
 		writeError(w, http.StatusUnauthorized, err.Error())
-	case errors.Is(err, service.ErrWeakPassword), errors.Is(err, service.ErrInvalidEmail):
+	case errors.Is(err, service.ErrWeakPassword), errors.Is(err, service.ErrInvalidEmail),
+		errors.Is(err, service.ErrInvalidToken), errors.Is(err, service.ErrAlreadyVerified):
 		writeError(w, http.StatusBadRequest, err.Error())
 	default:
 		log.Printf("auth: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
+	}
+}
+
+// meHandler reports the caller's own account state (drives the verify banner).
+func meHandler(a *service.AuthService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, _ := auth.UserID(r.Context())
+		me, err := a.Me(r.Context(), userID)
+		if err != nil {
+			log.Printf("me: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		writeJSON(w, http.StatusOK, me)
+	}
+}
+
+// verifyEmailHandler consumes the emailed link. It redirects into the SPA rather
+// than returning JSON, because this URL is opened directly in a browser from an
+// inbox — the user should land on the app, not on a wall of text.
+func verifyEmailHandler(a *service.AuthService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		dest := "/?verified=1"
+		if err := a.VerifyEmail(r.Context(), r.URL.Query().Get("token")); err != nil {
+			if !errors.Is(err, service.ErrInvalidToken) {
+				log.Printf("verify email: %v", err)
+			}
+			dest = "/?verify_error=1"
+		}
+		http.Redirect(w, r, dest, http.StatusSeeOther)
+	}
+}
+
+func resendVerificationHandler(a *service.AuthService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, _ := auth.UserID(r.Context())
+		if err := a.ResendVerification(r.Context(), userID); err != nil {
+			handleAuthError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+type forgotRequest struct {
+	Email string `json:"email"`
+}
+
+// forgotPasswordHandler always answers 204, whether or not the address has an
+// account: distinguishing the two would let anyone test which emails are registered.
+func forgotPasswordHandler(a *service.AuthService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req forgotRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		if err := a.RequestPasswordReset(r.Context(), req.Email); err != nil {
+			// Log it, but still report success — see above.
+			log.Printf("password reset request: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+type resetRequest struct {
+	Token    string `json:"token"`
+	Password string `json:"password"`
+}
+
+func resetPasswordHandler(a *service.AuthService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req resetRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+			return
+		}
+		if err := a.ResetPassword(r.Context(), req.Token, req.Password); err != nil {
+			handleAuthError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	}
 }
 
@@ -155,6 +289,10 @@ func createWatchHandler(watches *service.WatchService) http.HandlerFunc {
 				errors.Is(err, service.ErrThresholdRequired),
 				errors.Is(err, service.ErrMissingEventID):
 				writeError(w, http.StatusBadRequest, err.Error())
+			case errors.Is(err, service.ErrWatchLimitReached):
+				// The request is well-formed and authenticated; the account simply
+				// isn't allowed more watches.
+				writeError(w, http.StatusForbidden, err.Error())
 			default:
 				log.Printf("create watch: %v", err)
 				writeError(w, http.StatusBadGateway, "could not create watch (event lookup failed?)")

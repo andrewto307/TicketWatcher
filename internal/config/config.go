@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -33,6 +34,12 @@ type Config struct {
 	// Auth (Phase 5)
 	JWTSecret string
 	JWTTTL    time.Duration
+
+	// Tier 1 hardening (see plan/production-readiness/tier-1-safe-for-strangers.md)
+	AppBaseURL        string  // public origin, used to build emailed links
+	AuthRatePerMin    float64 // per-IP budget on /api/auth/*
+	AuthRateBurst     int
+	MaxWatchesPerUser int // protects the shared Ticketmaster budget; 0 = unlimited
 }
 
 // Load reads configuration from the environment, applying sensible defaults.
@@ -54,6 +61,10 @@ func Load() (Config, error) {
 		NotifyFrom:        getenv("NOTIFY_FROM", "alerts@example.com"),
 		JWTSecret:         getenv("JWT_SECRET", "dev-secret-change-me-in-prod"),
 		JWTTTL:            getenvDuration("JWT_TTL", 24*time.Hour),
+		AppBaseURL:        strings.TrimRight(getenv("APP_BASE_URL", "http://localhost:8080"), "/"),
+		AuthRatePerMin:    getenvFloat("AUTH_RATE_PER_MIN", 10),
+		AuthRateBurst:     getenvInt("AUTH_RATE_BURST", 5),
+		MaxWatchesPerUser: getenvInt("MAX_WATCHES_PER_USER", 50),
 	}
 	if cfg.TMAPIKey == "" {
 		return Config{}, errors.New("TM_API_KEY is required (get your Consumer Key at https://developer.ticketmaster.com/my-apps)")

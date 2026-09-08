@@ -133,22 +133,29 @@ func evaluateWatches(ctx context.Context, ev db.Event, minC *int64, avail string
 			evaluator.Observation{MinPriceCents: minC, Availability: avail},
 		)
 
-		if met && !w.LastEvaluation { // rising edge: false -> true
-			if d.Notifier != nil {
-				d.Notifier.Notify(ctx, notifier.Alert{
-					WatchID:        w.ID,
-					ToEmail:        w.UserEmail,
-					EventName:      ev.Name,
-					Venue:          ev.Venue,
-					EventURL:       ev.Url,
-					ConditionType:  w.ConditionType,
-					ThresholdCents: w.ThresholdCents,
-					MinPriceCents:  minC,
-					Availability:   avail,
-				})
-			}
-			if err := d.Store.MarkNotified(ctx, w.ID); err != nil {
-				return fmt.Errorf("mark notified: %w", err)
+		// Rising edge (false -> true), and only for an address whose owner confirmed
+		// it. An unverified user's watch still records its evaluation below, so it
+		// stays correctly armed — they just miss alerts until they verify.
+		if met && !w.LastEvaluation {
+			if !w.EmailVerifiedAt.Valid {
+				log.Printf("worker: watch %d fired but %s is unverified — alert withheld", w.ID, w.UserEmail)
+			} else {
+				if d.Notifier != nil {
+					d.Notifier.Notify(ctx, notifier.Alert{
+						WatchID:        w.ID,
+						ToEmail:        w.UserEmail,
+						EventName:      ev.Name,
+						Venue:          ev.Venue,
+						EventURL:       ev.Url,
+						ConditionType:  w.ConditionType,
+						ThresholdCents: w.ThresholdCents,
+						MinPriceCents:  minC,
+						Availability:   avail,
+					})
+				}
+				if err := d.Store.MarkNotified(ctx, w.ID); err != nil {
+					return fmt.Errorf("mark notified: %w", err)
+				}
 			}
 		}
 

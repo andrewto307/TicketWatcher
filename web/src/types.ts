@@ -35,6 +35,13 @@ export interface Snapshot {
   checked_at: string;
 }
 
+// The signed-in user's own account state (service.UserView).
+export interface Me {
+  id: number;
+  email: string;
+  email_verified: boolean;
+}
+
 export interface Notification {
   id: number;
   watch_id: number;

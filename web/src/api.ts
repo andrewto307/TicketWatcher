@@ -1,4 +1,4 @@
-import type { EventResult, Notification, Snapshot, Watch } from "./types";
+import type { EventResult, Me, Notification, Snapshot, Watch } from "./types";
 import { clearToken, getToken } from "./auth";
 
 const base = "/api";
@@ -34,6 +34,19 @@ async function jAuth<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+// For endpoints that answer 204 with no body but can still fail with a message.
+async function jEmpty(res: Response): Promise<void> {
+  if (res.ok) return;
+  let msg = `error ${res.status}`;
+  try {
+    const b = (await res.json()) as { error?: string };
+    if (b.error) msg = b.error;
+  } catch {
+    /* ignore */
+  }
+  throw new Error(msg);
+}
+
 export const api = {
   register: (email: string, password: string) =>
     fetch(`${base}/auth/register`, {
@@ -48,6 +61,25 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ email, password }),
     }).then(jAuth<{ token: string }>),
+
+  me: () => fetch(`${base}/me`, { headers: authHeaders() }).then(jProtected<Me>),
+
+  resendVerification: () =>
+    fetch(`${base}/auth/verify/resend`, { method: "POST", headers: authHeaders() }).then(jEmpty),
+
+  forgotPassword: (email: string) =>
+    fetch(`${base}/auth/forgot`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+    }).then(jEmpty),
+
+  resetPassword: (token: string, password: string) =>
+    fetch(`${base}/auth/reset`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ token, password }),
+    }).then(jEmpty),
 
   search: (q: string) =>
     fetch(`${base}/search?q=${encodeURIComponent(q)}`, { headers: authHeaders() }).then(jProtected<EventResult[]>),

@@ -15,7 +15,10 @@
 # Node / frontend
 node_modules/
 web/node_modules/
-web/dist/
+# Ignore built SPA output, but keep the placeholder so `//go:embed dist` still
+# compiles on a fresh checkout (before `npm run build` has run).
+web/dist/*
+!web/dist/.gitkeep
 
 # Editor / OS
 .DS_Store

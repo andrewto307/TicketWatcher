@@ -53,6 +53,17 @@ section h2 { font-size: 1.1rem; margin: 0 0 12px; display: flex; align-items: ce
   padding: 10px 12px; border-radius: 8px; margin: 12px 0; font-size: 0.9rem;
 }
 
+/* Informational, not an error: verification prompts and reset confirmations. */
+.notice {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  padding: 10px 12px; border-radius: 8px; margin: 12px 0; font-size: 0.9rem;
+  text-align: left;
+}
+.notice span { flex: 1 1 220px; }
+.notice code { font-size: 0.85em; }
+
 button {
   font: inherit; cursor: pointer; border: 1px solid var(--border);
   background: var(--panel); color: var(--text);
@@ -150,3 +161,5 @@ input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 
   padding: 9px; font-weight: 600;
 }
 .auth-card .link { margin-top: 14px; }
+.auth-links { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.auth-card .notice { margin-top: 4px; text-align: left; }

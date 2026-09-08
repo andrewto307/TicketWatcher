@@ -8,20 +8,24 @@ import (
 	"time"
 
 	"ticket-watcher/internal/auth"
+	"ticket-watcher/internal/ratelimit"
 	"ticket-watcher/internal/service"
 )
 
 const testSecret = "test-secret"
 
 // Services built with nil deps: these tests only exercise handler paths that
-// return before any DB / Ticketmaster call (validation, bad input, auth).
+// return before any DB / Ticketmaster call (validation, bad input, auth). A nil
+// limiter and nil static FS keep the router to just its API surface.
 func testRouter() http.Handler {
 	return NewRouter(
-		service.NewAuthService(nil, testSecret, time.Hour),
+		service.NewAuthService(nil, testSecret, time.Hour, nil, "http://test"),
 		service.NewSearchService(nil),
-		service.NewWatchService(nil, nil),
+		service.NewWatchService(nil, nil, 0),
 		service.NewNotificationService(nil),
 		testSecret,
+		nil,
+		nil,
 	)
 }
 
@@ -75,6 +79,70 @@ func TestRegister_WeakPassword_400(t *testing.T) {
 func TestSearch_MissingQuery_400(t *testing.T) {
 	if rec := do(t, http.MethodGet, "/api/search", "", validToken(t)); rec.Code != http.StatusBadRequest {
 		t.Errorf("search without q = %d, want 400", rec.Code)
+	}
+}
+
+// The auth endpoints must shed load from a single client: without this, login is
+// open to unlimited password guessing.
+func TestAuthEndpoints_RateLimited(t *testing.T) {
+	limiter := ratelimit.NewIPLimiter(60, 2) // 2-request burst
+	router := NewRouter(
+		service.NewAuthService(nil, testSecret, time.Hour, nil, "http://test"),
+		service.NewSearchService(nil),
+		service.NewWatchService(nil, nil, 0),
+		service.NewNotificationService(nil),
+		testSecret,
+		limiter,
+		nil,
+	)
+
+	// A weak password 400s before any DB call, so these exercise the middleware
+	// without needing real services behind it.
+	post := func() int {
+		r := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"a@b.com","password":"short"}`))
+		r.Header.Set("Fly-Client-IP", "9.9.9.9")
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, r)
+		return rec.Code
+	}
+
+	for i := 0; i < 2; i++ {
+		if code := post(); code == http.StatusTooManyRequests {
+			t.Fatalf("request %d was throttled, want it inside the burst", i+1)
+		}
+	}
+	if code := post(); code != http.StatusTooManyRequests {
+		t.Errorf("3rd rapid request = %d, want 429", code)
+	}
+
+	// A different client keeps its own budget.
+	r := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"a@b.com","password":"short"}`))
+	r.Header.Set("Fly-Client-IP", "8.8.8.8")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, r)
+	if rec.Code == http.StatusTooManyRequests {
+		t.Error("a different IP was throttled — the limit must be per client")
+	}
+}
+
+// Health and authenticated routes must not sit behind the auth throttle.
+func TestRateLimit_DoesNotApplyToHealthz(t *testing.T) {
+	limiter := ratelimit.NewIPLimiter(60, 1)
+	router := NewRouter(
+		service.NewAuthService(nil, testSecret, time.Hour, nil, "http://test"),
+		service.NewSearchService(nil),
+		service.NewWatchService(nil, nil, 0),
+		service.NewNotificationService(nil),
+		testSecret,
+		limiter,
+		nil,
+	)
+	for i := 0; i < 5; i++ {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("healthz call %d = %d, want 200", i+1, rec.Code)
+		}
 	}
 }
 

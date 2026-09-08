@@ -1,21 +1,41 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "./api";
-import type { Notification, Watch } from "./types";
+import type { Me, Notification, Watch } from "./types";
 import { clearToken, getToken } from "./auth";
 import { Login } from "./components/Login";
+import { ResetPassword } from "./components/ResetPassword";
+import { VerifyBanner } from "./components/VerifyBanner";
 import { SearchBar } from "./components/SearchBar";
 import { WatchList } from "./components/WatchList";
 import { NotificationLog } from "./components/NotificationLog";
 
+// The app has no router: these read the URL the browser landed on. Deep links
+// work because the Go SPA handler serves index.html for any non-/api path.
+const resetToken =
+  window.location.pathname === "/reset-password"
+    ? new URLSearchParams(window.location.search).get("token")
+    : null;
+
+// Set by the backend's redirect after it consumes a verification link.
+const verifyResult = (() => {
+  const q = new URLSearchParams(window.location.search);
+  if (q.has("verified")) return "ok" as const;
+  if (q.has("verify_error")) return "failed" as const;
+  return null;
+})();
+
 export function App() {
   const [authed, setAuthed] = useState(!!getToken());
+  const [me, setMe] = useState<Me | null>(null);
   const [watches, setWatches] = useState<Watch[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [verifyBanner, setVerifyBanner] = useState(verifyResult);
 
   const refresh = useCallback(async () => {
     try {
-      const [w, n] = await Promise.all([api.listWatches(), api.notifications()]);
+      const [m, w, n] = await Promise.all([api.me(), api.listWatches(), api.notifications()]);
+      setMe(m);
       setWatches(w);
       setNotifications(n);
       setError(null);
@@ -31,12 +51,23 @@ export function App() {
     return () => clearInterval(t);
   }, [authed, refresh]);
 
+  // Clear the one-shot ?verified= flag from the address bar so a refresh (or a
+  // shared URL) doesn't replay the message.
+  useEffect(() => {
+    if (verifyResult) window.history.replaceState({}, "", "/");
+  }, []);
+
+  if (resetToken) {
+    return <ResetPassword token={resetToken} />;
+  }
+
   if (!authed) {
     return <Login onAuthed={() => setAuthed(true)} />;
   }
 
   function logout() {
     clearToken();
+    setMe(null);
     setWatches([]);
     setNotifications([]);
     setAuthed(false);
@@ -51,6 +82,20 @@ export function App() {
         </div>
         <button className="logout" onClick={logout}>Log out</button>
       </header>
+
+      {verifyBanner === "ok" && (
+        <div className="notice">
+          <span>✅ Your email is confirmed — alerts are on.</span>
+          <button type="button" onClick={() => setVerifyBanner(null)}>Dismiss</button>
+        </div>
+      )}
+      {verifyBanner === "failed" && (
+        <div className="error">
+          That verification link is invalid or has expired. Use “Resend email” below to get a new one.
+        </div>
+      )}
+
+      {me && !me.email_verified && <VerifyBanner email={me.email} />}
 
       {error && <div className="error">Can't reach the backend: {error}</div>}
 

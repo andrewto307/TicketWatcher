@@ -23,6 +23,7 @@ import (
 	"ticket-watcher/internal/store/db"
 	"ticket-watcher/internal/ticketmaster"
 	"ticket-watcher/internal/worker"
+	"ticket-watcher/web"
 )
 
 func main() {
@@ -53,13 +54,8 @@ func main() {
 	quota := ratelimit.NewDailyQuota(cfg.DailyBudgetPoll, cfg.DailyBudgetSearch)
 	limiter := ratelimit.New(cfg.RatePerSec, cfg.RateBurst, quota)
 
-	tm := ticketmaster.New(cfg.TMBaseURL, cfg.TMAPIKey, limiter)
-	authSvc := service.NewAuthService(q, cfg.JWTSecret, cfg.JWTTTL)
-	searchSvc := service.NewSearchService(tm)
-	watchSvc := service.NewWatchService(q, tm)
-	notifSvc := service.NewNotificationService(q)
-
 	// Notifications: real email if a Resend key is configured, else log-only.
+	// The same sender carries alerts and account mail (verification, reset).
 	var emailSender notifier.Sender
 	if cfg.ResendAPIKey != "" {
 		emailSender = notifier.NewResendSender(cfg.ResendAPIKey, cfg.NotifyFrom)
@@ -69,6 +65,15 @@ func main() {
 		log.Print("notifier: RESEND_API_KEY not set -> using log-only email sender")
 	}
 	notif := notifier.New(q, emailSender)
+
+	tm := ticketmaster.New(cfg.TMBaseURL, cfg.TMAPIKey, limiter)
+	authSvc := service.NewAuthService(q, cfg.JWTSecret, cfg.JWTTTL, emailSender, cfg.AppBaseURL)
+	searchSvc := service.NewSearchService(tm)
+	watchSvc := service.NewWatchService(q, tm, cfg.MaxWatchesPerUser)
+	notifSvc := service.NewNotificationService(q)
+
+	// Inbound throttle on the public auth endpoints (brute-force / signup spam).
+	authLimiter := ratelimit.NewIPLimiter(cfg.AuthRatePerMin, cfg.AuthRateBurst)
 
 	// Background engine: scheduler -> jobs channel -> worker pool.
 	jobs := make(chan int64, cfg.WorkerCount)
@@ -80,8 +85,17 @@ func main() {
 	schedWG.Add(1)
 	go func() { defer schedWG.Done(); sched.Run(ctx) }()
 
+	// Embedded SPA: one binary serves the API and the React frontend.
+	staticFS, err := web.Dist()
+	if err != nil {
+		log.Fatalf("static assets: %v", err)
+	}
+
 	// HTTP server.
-	srv := &http.Server{Addr: cfg.HTTPAddr, Handler: httpapi.NewRouter(authSvc, searchSvc, watchSvc, notifSvc, cfg.JWTSecret)}
+	srv := &http.Server{
+		Addr:    cfg.HTTPAddr,
+		Handler: httpapi.NewRouter(authSvc, searchSvc, watchSvc, notifSvc, cfg.JWTSecret, authLimiter, staticFS),
+	}
 	go func() {
 		log.Printf("api listening on %s", cfg.HTTPAddr)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

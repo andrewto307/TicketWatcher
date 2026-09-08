@@ -20,6 +20,7 @@ var (
 	ErrMissingEventID    = errors.New("tm_event_id is required")
 	ErrWatchNotFound     = errors.New("watch not found")
 	ErrInvalidStatus     = errors.New("status must be 'active' or 'paused'")
+	ErrWatchLimitReached = errors.New("watch limit reached")
 )
 
 // Fetcher is the slice of the Ticketmaster client the watch service needs.
@@ -30,12 +31,16 @@ type Fetcher interface {
 // WatchService creates and manages a user's watches. The user id is supplied per
 // call by the HTTP layer (from the authenticated token), not held on the service.
 type WatchService struct {
-	q  *db.Queries
-	tm Fetcher
+	q          *db.Queries
+	tm         Fetcher
+	maxPerUser int // 0 = unlimited
 }
 
-func NewWatchService(q *db.Queries, tm Fetcher) *WatchService {
-	return &WatchService{q: q, tm: tm}
+// NewWatchService caps each user at maxPerUser watches. The cap exists because
+// every watched event draws on one shared Ticketmaster budget (5,000 req/day) —
+// without it a single account could starve everyone else. Pass 0 to disable.
+func NewWatchService(q *db.Queries, tm Fetcher, maxPerUser int) *WatchService {
+	return &WatchService{q: q, tm: tm, maxPerUser: maxPerUser}
 }
 
 // CreateWatchInput is the validated input for creating a watch (dollars).
@@ -89,6 +94,19 @@ func (s *WatchService) Create(ctx context.Context, userID int64, in CreateWatchI
 	}
 	if in.ConditionType == "price_below" && in.Threshold == nil {
 		return WatchView{}, ErrThresholdRequired
+	}
+
+	// Check the cap before resolving the event: an over-limit request must not
+	// spend a Ticketmaster call on an event we're about to refuse to watch.
+	if s.maxPerUser > 0 {
+		n, err := s.q.CountWatchesForUser(ctx, userID)
+		if err != nil {
+			return WatchView{}, fmt.Errorf("count watches: %w", err)
+		}
+		if n >= int64(s.maxPerUser) {
+			return WatchView{}, fmt.Errorf("%w: you can track up to %d events at once — remove one to add another",
+				ErrWatchLimitReached, s.maxPerUser)
+		}
 	}
 
 	ev, err := s.q.GetEventByTMID(ctx, in.TMEventID)

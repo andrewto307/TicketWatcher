@@ -42,11 +42,13 @@ func TestAPI_AuthAndWatchLifecycle(t *testing.T) {
 
 	const secret = "int-test-secret"
 	router := httpapi.NewRouter(
-		service.NewAuthService(q, secret, time.Hour),
+		service.NewAuthService(q, secret, time.Hour, nil, "http://test"),
 		service.NewSearchService(tm),
-		service.NewWatchService(q, tm),
+		service.NewWatchService(q, tm, 0),
 		service.NewNotificationService(q),
 		secret,
+		nil,
+		nil,
 	)
 	api := httptest.NewServer(router)
 	defer api.Close()
@@ -84,7 +86,10 @@ func TestAPI_AuthAndWatchLifecycle(t *testing.T) {
 	}
 
 	// --- register -> token ---
-	res := req(http.MethodPost, "/api/auth/register", "", `{"email":"user@example.com","password":"password123"}`)
+	// Unique email per run: setupDB doesn't truncate `users` (the seeded demo
+	// user is relied on by other tests), so a fixed email would 409 on re-runs.
+	email := fmt.Sprintf("user+%d@example.com", time.Now().UnixNano())
+	res := req(http.MethodPost, "/api/auth/register", "", fmt.Sprintf(`{"email":%q,"password":"password123"}`, email))
 	if res.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(res.Body)
 		t.Fatalf("register: %d: %s", res.StatusCode, b)
