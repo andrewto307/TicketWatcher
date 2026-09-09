@@ -100,6 +100,10 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
                   Forgot password?
                 </button>
               )}
+              {/* Visible before signing up, which is when it actually matters. */}
+              <a className="muted" href="/privacy" style={{ fontSize: "0.85rem", marginTop: 6 }}>
+                Privacy policy
+              </a>
             </div>
           </>
         )}

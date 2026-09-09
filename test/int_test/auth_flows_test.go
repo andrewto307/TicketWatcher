@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"ticket-watcher/internal/auth"
 	"ticket-watcher/internal/httpapi"
 	"ticket-watcher/internal/notifier"
 	"ticket-watcher/internal/ratelimit"
@@ -47,6 +48,16 @@ func (m *captureMailer) last(t *testing.T) notifier.Message {
 	return m.sent[len(m.sent)-1]
 }
 
+// Signing secret shared by the test server and the helpers that mint tokens the
+// way the app would.
+const intTestSecret = "int-test-secret"
+
+// unsubscribeTokenFor mints the opt-out token the notifier would embed in an
+// alert email for this user.
+func unsubscribeTokenFor(userID int64) string {
+	return auth.NewUnsubscribeToken(intTestSecret, userID)
+}
+
 var tokenRe = regexp.MustCompile(`token=([A-Za-z0-9_\-%]+)`)
 
 // tokenFromEmail pulls the one-time token out of the link in an email body.
@@ -74,12 +85,13 @@ func newAuthTestServer(t *testing.T, limiter *ratelimit.IPLimiter, maxWatches in
 	tm := ticketmaster.New(tmSrv.URL, "testkey", nil)
 
 	mail := &captureMailer{}
-	const secret = "int-test-secret"
+	secret := intTestSecret
 	router := httpapi.NewRouter(
 		service.NewAuthService(q, secret, time.Hour, mail, "http://test"),
 		service.NewSearchService(tm),
 		service.NewWatchService(q, tm, maxWatches),
 		service.NewNotificationService(q),
+		service.NewAccountService(q, secret),
 		secret,
 		limiter,
 		nil,

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -133,6 +134,66 @@ func TestProcessEvent_NeverTrue(t *testing.T) {
 	}
 	if notif.calls != 0 {
 		t.Errorf("notifier calls = %d, want 0 (condition never met)", notif.calls)
+	}
+}
+
+// TestProcessEvent_UnsubscribedUserIsNotAlerted covers the Tier 3 rule: someone
+// who opted out must stop receiving mail, even though their watch still fires.
+func TestProcessEvent_UnsubscribedUserIsNotAlerted(t *testing.T) {
+	thr := int64(20000) // $200.00
+	st := &fakeStore{
+		event: db.Event{ID: 1, TmEventID: "x", Name: "Test"},
+		watch: db.ListActiveWatchesForEventRow{
+			ID: 1, ConditionType: "price_below", ThresholdCents: &thr, Status: "active",
+			UserEmail: "opted-out@e.com", EmailVerifiedAt: verified(), UnsubscribedAt: verified(),
+		},
+	}
+	fetch := &fakeFetcher{min: usd(180), avail: "onsale"} // condition is met
+	notif := &fakeNotifier{}
+	deps := Deps{Store: st, TM: fetch, Notifier: notif, Now: time.Now}
+
+	if err := ProcessEvent(context.Background(), 1, deps); err != nil {
+		t.Fatal(err)
+	}
+	if notif.calls != 0 {
+		t.Errorf("notifier calls = %d, want 0 (user unsubscribed)", notif.calls)
+	}
+	if st.marked != 0 {
+		t.Errorf("MarkNotified called %d times, want 0 (nothing was sent)", st.marked)
+	}
+	if !st.watch.LastEvaluation {
+		t.Error("last_evaluation = false, want true (the watch must still track the edge)")
+	}
+}
+
+// Every alert must carry the opt-out link, or the unsubscribe requirement is
+// only theoretically satisfied.
+func TestProcessEvent_AlertCarriesUnsubscribeURL(t *testing.T) {
+	thr := int64(20000)
+	st := &fakeStore{
+		event: db.Event{ID: 1, TmEventID: "x", Name: "Test"},
+		watch: db.ListActiveWatchesForEventRow{
+			ID: 1, UserID: 99, ConditionType: "price_below", ThresholdCents: &thr, Status: "active",
+			UserEmail: "u@e.com", EmailVerifiedAt: verified(),
+		},
+	}
+	fetch := &fakeFetcher{min: usd(180), avail: "onsale"}
+	notif := &fakeNotifier{}
+	deps := Deps{
+		Store: st, TM: fetch, Notifier: notif, Now: time.Now,
+		UnsubscribeURL: func(userID int64) string {
+			return fmt.Sprintf("https://app.test/api/unsubscribe?token=u%d", userID)
+		},
+	}
+
+	if err := ProcessEvent(context.Background(), 1, deps); err != nil {
+		t.Fatal(err)
+	}
+	if notif.calls != 1 {
+		t.Fatalf("notifier calls = %d, want 1", notif.calls)
+	}
+	if got, want := notif.last.UnsubscribeURL, "https://app.test/api/unsubscribe?token=u99"; got != want {
+		t.Errorf("UnsubscribeURL = %q, want %q (built for the watch's owner)", got, want)
 	}
 }
 

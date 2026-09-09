@@ -45,6 +45,9 @@ type Deps struct {
 	TM       Fetcher
 	Notifier Notifier
 	Now      func() time.Time
+	// UnsubscribeURL builds a user's opt-out link. Injected as a closure so the
+	// worker needs neither the app secret nor the public URL. Nil in tests.
+	UnsubscribeURL func(userID int64) string
 }
 
 // StartPool launches n worker goroutines draining jobs. Workers exit when jobs is
@@ -133,14 +136,22 @@ func evaluateWatches(ctx context.Context, ev db.Event, minC *int64, avail string
 			evaluator.Observation{MinPriceCents: minC, Availability: avail},
 		)
 
-		// Rising edge (false -> true), and only for an address whose owner confirmed
-		// it. An unverified user's watch still records its evaluation below, so it
-		// stays correctly armed — they just miss alerts until they verify.
+		// Rising edge (false -> true). Two consent checks gate delivery: the owner
+		// must have confirmed the address, and must not have opted out. Either way
+		// the evaluation below is still recorded, so the watch stays correctly
+		// armed and nothing silently drifts out of sync.
 		if met && !w.LastEvaluation {
-			if !w.EmailVerifiedAt.Valid {
+			switch {
+			case !w.EmailVerifiedAt.Valid:
 				log.Printf("worker: watch %d fired but %s is unverified — alert withheld", w.ID, w.UserEmail)
-			} else {
+			case w.UnsubscribedAt.Valid:
+				log.Printf("worker: watch %d fired but %s has unsubscribed — alert withheld", w.ID, w.UserEmail)
+			default:
 				if d.Notifier != nil {
+					var unsubURL string
+					if d.UnsubscribeURL != nil {
+						unsubURL = d.UnsubscribeURL(w.UserID)
+					}
 					d.Notifier.Notify(ctx, notifier.Alert{
 						WatchID:        w.ID,
 						ToEmail:        w.UserEmail,
@@ -151,6 +162,7 @@ func evaluateWatches(ctx context.Context, ev db.Event, minC *int64, avail string
 						ThresholdCents: w.ThresholdCents,
 						MinPriceCents:  minC,
 						Availability:   avail,
+						UnsubscribeURL: unsubURL,
 					})
 				}
 				if err := d.Store.MarkNotified(ctx, w.ID); err != nil {

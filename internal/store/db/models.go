@@ -56,6 +56,7 @@ type User struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	PasswordHash    string             `json:"password_hash"`
 	EmailVerifiedAt pgtype.Timestamptz `json:"email_verified_at"`
+	UnsubscribedAt  pgtype.Timestamptz `json:"unsubscribed_at"`
 }
 
 type Watch struct {

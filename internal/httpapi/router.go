@@ -4,6 +4,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
@@ -29,6 +30,7 @@ func NewRouter(
 	search *service.SearchService,
 	watches *service.WatchService,
 	notifications *service.NotificationService,
+	accounts *service.AccountService,
 	jwtSecret string,
 	authLimiter *ratelimit.IPLimiter,
 	staticFS fs.FS,
@@ -54,6 +56,13 @@ func NewRouter(
 			r.Get("/auth/verify", verifyEmailHandler(authSvc))
 		})
 
+		// Opt-out. Public and unauthenticated by design: someone acting on an old
+		// email must be able to stop the mail without digging up a password. The
+		// HMAC token is the authorization. POST implements RFC 8058 one-click, which
+		// Gmail and Outlook call directly from their own unsubscribe button.
+		r.Get("/unsubscribe", unsubscribeHandler(accounts, false))
+		r.Post("/unsubscribe", unsubscribeHandler(accounts, true))
+
 		// Authenticated.
 		r.Group(func(r chi.Router) {
 			r.Use(auth.Middleware(jwtSecret))
@@ -66,6 +75,8 @@ func NewRouter(
 			r.Patch("/watches/{id}", updateWatchHandler(watches))
 			r.Delete("/watches/{id}", deleteWatchHandler(watches))
 			r.Get("/notifications", listNotificationsHandler(notifications))
+			r.Post("/account/resubscribe", resubscribeHandler(accounts))
+			r.Delete("/account", deleteAccountHandler(accounts))
 		})
 	})
 
@@ -166,6 +177,12 @@ func meHandler(a *service.AuthService) http.HandlerFunc {
 		userID, _ := auth.UserID(r.Context())
 		me, err := a.Me(r.Context(), userID)
 		if err != nil {
+			// Token outlived its account (deleted) -> 401 so the client clears the
+			// stale token and returns to login, rather than reporting a server fault.
+			if errors.Is(err, service.ErrNoAccount) {
+				writeError(w, http.StatusUnauthorized, err.Error())
+				return
+			}
 			log.Printf("me: %v", err)
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
@@ -236,6 +253,71 @@ func resetPasswordHandler(a *service.AuthService) http.HandlerFunc {
 		}
 		if err := a.ResetPassword(r.Context(), req.Token, req.Password); err != nil {
 			handleAuthError(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+// --- account: opt-out and erasure (Tier 3) ---
+
+// unsubscribeHandler opts the token's owner out of all alert email.
+//
+// oneClick distinguishes the two callers. A human clicking the footer link (GET)
+// should land on a page telling them it worked; Gmail's own unsubscribe button
+// (POST, RFC 8058) is a machine that wants a bare 200 and would render an HTML
+// page nowhere.
+func unsubscribeHandler(accounts *service.AccountService, oneClick bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		err := accounts.Unsubscribe(r.Context(), r.URL.Query().Get("token"))
+
+		if oneClick {
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid unsubscribe link")
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		// Self-contained HTML: the reader arrives from an email client and is
+		// probably not logged in, so bouncing them into the SPA would land them
+		// on a login screen and leave them unsure whether it worked.
+		status, body := http.StatusOK, unsubscribedPage
+		if err != nil {
+			status, body = http.StatusBadRequest, unsubscribeFailedPage
+			if !errors.Is(err, auth.ErrInvalidUnsubscribeToken) {
+				log.Printf("unsubscribe: %v", err)
+			}
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(status)
+		_, _ = io.WriteString(w, body)
+	}
+}
+
+func resubscribeHandler(accounts *service.AccountService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, _ := auth.UserID(r.Context())
+		if err := accounts.Resubscribe(r.Context(), userID); err != nil {
+			log.Printf("resubscribe: %v", err)
+			writeError(w, http.StatusInternalServerError, "could not re-enable alerts")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func deleteAccountHandler(accounts *service.AccountService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, _ := auth.UserID(r.Context())
+		if err := accounts.Delete(r.Context(), userID); err != nil {
+			if errors.Is(err, service.ErrAccountNotFound) {
+				writeError(w, http.StatusNotFound, "account not found")
+				return
+			}
+			log.Printf("delete account: %v", err)
+			writeError(w, http.StatusInternalServerError, "could not delete account")
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)

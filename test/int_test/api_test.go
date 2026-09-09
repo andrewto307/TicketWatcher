@@ -46,6 +46,7 @@ func TestAPI_AuthAndWatchLifecycle(t *testing.T) {
 		service.NewSearchService(tm),
 		service.NewWatchService(q, tm, 0),
 		service.NewNotificationService(q),
+		service.NewAccountService(q, secret),
 		secret,
 		nil,
 		nil,

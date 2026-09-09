@@ -71,6 +71,7 @@ func main() {
 	searchSvc := service.NewSearchService(tm)
 	watchSvc := service.NewWatchService(q, tm, cfg.MaxWatchesPerUser)
 	notifSvc := service.NewNotificationService(q)
+	accountSvc := service.NewAccountService(q, cfg.JWTSecret)
 
 	// Inbound throttle on the public auth endpoints (brute-force / signup spam).
 	authLimiter := ratelimit.NewIPLimiter(cfg.AuthRatePerMin, cfg.AuthRateBurst)
@@ -78,7 +79,14 @@ func main() {
 	// Background engine: scheduler -> jobs channel -> worker pool.
 	jobs := make(chan int64, cfg.WorkerCount)
 	var workersWG sync.WaitGroup
-	worker.StartPool(ctx, cfg.WorkerCount, jobs, worker.Deps{Store: q, TM: tm, Notifier: notif}, &workersWG)
+	worker.StartPool(ctx, cfg.WorkerCount, jobs, worker.Deps{
+		Store:    q,
+		TM:       tm,
+		Notifier: notif,
+		UnsubscribeURL: func(userID int64) string {
+			return accountSvc.UnsubscribeURL(cfg.AppBaseURL, userID)
+		},
+	}, &workersWG)
 
 	sched := scheduler.New(q, quota, jobs, cfg.SchedulerInterval, cfg.MaxEventsPerTick)
 	var schedWG sync.WaitGroup
@@ -94,7 +102,7 @@ func main() {
 	// HTTP server.
 	srv := &http.Server{
 		Addr:    cfg.HTTPAddr,
-		Handler: httpapi.NewRouter(authSvc, searchSvc, watchSvc, notifSvc, cfg.JWTSecret, authLimiter, staticFS),
+		Handler: httpapi.NewRouter(authSvc, searchSvc, watchSvc, notifSvc, accountSvc, cfg.JWTSecret, authLimiter, staticFS),
 	}
 	go func() {
 		log.Printf("api listening on %s", cfg.HTTPAddr)

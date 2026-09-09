@@ -5,6 +5,8 @@ import { clearToken, getToken } from "./auth";
 import { Login } from "./components/Login";
 import { ResetPassword } from "./components/ResetPassword";
 import { VerifyBanner } from "./components/VerifyBanner";
+import { Privacy } from "./components/Privacy";
+import { AccountSettings } from "./components/AccountSettings";
 import { SearchBar } from "./components/SearchBar";
 import { WatchList } from "./components/WatchList";
 import { NotificationLog } from "./components/NotificationLog";
@@ -15,6 +17,8 @@ const resetToken =
   window.location.pathname === "/reset-password"
     ? new URLSearchParams(window.location.search).get("token")
     : null;
+
+const isPrivacyPage = window.location.pathname === "/privacy";
 
 // Set by the backend's redirect after it consumes a verification link.
 const verifyResult = (() => {
@@ -56,6 +60,11 @@ export function App() {
   useEffect(() => {
     if (verifyResult) window.history.replaceState({}, "", "/");
   }, []);
+
+  // Readable without an account — a privacy policy you must log in to read is useless.
+  if (isPrivacyPage) {
+    return <Privacy />;
+  }
 
   if (resetToken) {
     return <ResetPassword token={resetToken} />;
@@ -113,6 +122,12 @@ export function App() {
         <h2>Notifications <span className="count">{notifications.length}</span></h2>
         <NotificationLog notifications={notifications} />
       </section>
+
+      {me && <AccountSettings me={me} onChanged={refresh} />}
+
+      <footer className="app-footer">
+        <a href="/privacy">Privacy policy</a>
+      </footer>
     </div>
   );
 }

@@ -40,6 +40,7 @@ export interface Me {
   id: number;
   email: string;
   email_verified: boolean;
+  unsubscribed: boolean;
 }
 
 export interface Notification {

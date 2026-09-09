@@ -25,6 +25,7 @@ var (
 	ErrInvalidEmail       = errors.New("a valid email is required")
 	ErrInvalidToken       = errors.New("this link is invalid or has expired")
 	ErrAlreadyVerified    = errors.New("email is already verified")
+	ErrNoAccount          = errors.New("this account no longer exists")
 )
 
 // Token purposes (must match the CHECK constraint in migration 0003).
@@ -65,6 +66,7 @@ type UserView struct {
 	ID            int64  `json:"id"`
 	Email         string `json:"email"`
 	EmailVerified bool   `json:"email_verified"`
+	Unsubscribed  bool   `json:"unsubscribed"`
 }
 
 // Register creates an account and returns a signed token. The account starts
@@ -113,12 +115,25 @@ func (s *AuthService) Login(ctx context.Context, email, password string) (string
 }
 
 // Me returns the caller's own account state (drives the "verify your email" banner).
+//
+// A structurally valid token can outlive its account — the user deletes it, but
+// the JWT stays in their browser until it expires. That's an authentication
+// failure, not a server error, so it maps to ErrNoAccount and a 401; anything
+// else would leave the frontend showing "internal error" instead of the login screen.
 func (s *AuthService) Me(ctx context.Context, userID int64) (UserView, error) {
 	u, err := s.q.GetUserByID(ctx, userID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return UserView{}, ErrNoAccount
+	}
 	if err != nil {
 		return UserView{}, err
 	}
-	return UserView{ID: u.ID, Email: u.Email, EmailVerified: u.EmailVerifiedAt.Valid}, nil
+	return UserView{
+		ID:            u.ID,
+		Email:         u.Email,
+		EmailVerified: u.EmailVerifiedAt.Valid,
+		Unsubscribed:  u.UnsubscribedAt.Valid,
+	}, nil
 }
 
 // ResendVerification re-sends the confirmation email to an authenticated user.

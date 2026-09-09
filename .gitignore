@@ -24,3 +24,7 @@ web/dist/*
 .DS_Store
 .idea/
 .vscode/
+
+# Local Claude Code settings. Usually covered by a global gitignore, but that
+# doesn't travel with the repo — and this file can contain API keys.
+.claude/settings.local.json

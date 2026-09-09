@@ -113,4 +113,10 @@ export const api = {
     }),
 
   notifications: () => fetch(`${base}/notifications`, { headers: authHeaders() }).then(jProtected<Notification[]>),
+
+  resubscribe: () =>
+    fetch(`${base}/account/resubscribe`, { method: "POST", headers: authHeaders() }).then(jEmpty),
+
+  deleteAccount: () =>
+    fetch(`${base}/account`, { method: "DELETE", headers: authHeaders() }).then(jEmpty),
 };

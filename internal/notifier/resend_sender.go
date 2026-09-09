@@ -25,13 +25,19 @@ func NewResendSender(apiKey, from string) *ResendSender {
 func (*ResendSender) Channel() string { return "email" }
 
 func (r *ResendSender) Send(ctx context.Context, msg Message) error {
-	body, _ := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"from":    r.from,
 		"to":      []string{msg.To},
 		"subject": msg.Subject,
 		"html":    msg.HTMLBody,
 		"text":    msg.TextBody,
-	})
+	}
+	// List-Unsubscribe et al. Omitted when empty: Resend rejects an empty
+	// headers object on some API versions, and transactional mail has none.
+	if len(msg.Headers) > 0 {
+		payload["headers"] = msg.Headers
+	}
+	body, _ := json.Marshal(payload)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(body))
 	if err != nil {
 		return err

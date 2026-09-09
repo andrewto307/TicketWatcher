@@ -160,6 +160,20 @@ input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 
   margin-top: 4px; background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
   padding: 9px; font-weight: 600;
 }
+.app-footer {
+  margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--border);
+  font-size: 0.85rem; text-align: center;
+}
+.app-footer a { color: var(--muted); }
+
+/* Long-form pages (privacy policy) */
+.prose { max-width: 680px; }
+.prose h2 { font-size: 1.05rem; margin: 26px 0 8px; }
+.prose ul { padding-left: 20px; }
+.prose li { margin-bottom: 6px; }
+.prose p, .prose li { color: var(--muted); }
+.prose strong { color: var(--text); }
+
 .auth-card .link { margin-top: 14px; }
 .auth-links { display: flex; flex-direction: column; align-items: center; gap: 2px; }
 .auth-card .notice { margin-top: 4px; text-align: left; }

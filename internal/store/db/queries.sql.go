@@ -57,7 +57,7 @@ func (q *Queries) CreateAuthToken(ctx context.Context, arg CreateAuthTokenParams
 }
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, created_at, password_hash, email_verified_at
+INSERT INTO users (email, password_hash) VALUES ($1, $2) RETURNING id, email, created_at, password_hash, email_verified_at, unsubscribed_at
 `
 
 type CreateUserParams struct {
@@ -74,6 +74,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.CreatedAt,
 		&i.PasswordHash,
 		&i.EmailVerifiedAt,
+		&i.UnsubscribedAt,
 	)
 	return i, err
 }
@@ -130,6 +131,21 @@ type DeleteAuthTokensForUserParams struct {
 func (q *Queries) DeleteAuthTokensForUser(ctx context.Context, arg DeleteAuthTokensForUserParams) error {
 	_, err := q.db.Exec(ctx, deleteAuthTokensForUser, arg.UserID, arg.Purpose)
 	return err
+}
+
+const deleteUser = `-- name: DeleteUser :execrows
+DELETE FROM users WHERE id = $1
+`
+
+// Right to erasure. watches -> price_snapshots/notifications cascade from the
+// FKs in 0001_init, and auth_tokens cascades from 0003, so this removes every
+// trace of the account in one statement.
+func (q *Queries) DeleteUser(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteUser, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteWatch = `-- name: DeleteWatch :execrows
@@ -198,7 +214,7 @@ func (q *Queries) GetEventByTMID(ctx context.Context, tmEventID string) (Event, 
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, email, created_at, password_hash, email_verified_at FROM users WHERE email = $1
+SELECT id, email, created_at, password_hash, email_verified_at, unsubscribed_at FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -210,12 +226,13 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.CreatedAt,
 		&i.PasswordHash,
 		&i.EmailVerifiedAt,
+		&i.UnsubscribedAt,
 	)
 	return i, err
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, email, created_at, password_hash, email_verified_at FROM users WHERE id = $1
+SELECT id, email, created_at, password_hash, email_verified_at, unsubscribed_at FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
@@ -227,6 +244,7 @@ func (q *Queries) GetUserByID(ctx context.Context, id int64) (User, error) {
 		&i.CreatedAt,
 		&i.PasswordHash,
 		&i.EmailVerifiedAt,
+		&i.UnsubscribedAt,
 	)
 	return i, err
 }
@@ -346,7 +364,7 @@ func (q *Queries) InsertPriceSnapshot(ctx context.Context, arg InsertPriceSnapsh
 }
 
 const listActiveWatchesForEvent = `-- name: ListActiveWatchesForEvent :many
-SELECT w.id, w.user_id, w.event_id, w.condition_type, w.threshold_cents, w.status, w.last_evaluation, w.last_notified_at, w.poll_interval_s, w.created_at, u.email AS user_email, u.email_verified_at
+SELECT w.id, w.user_id, w.event_id, w.condition_type, w.threshold_cents, w.status, w.last_evaluation, w.last_notified_at, w.poll_interval_s, w.created_at, u.email AS user_email, u.email_verified_at, u.unsubscribed_at
 FROM watches w
 JOIN users u ON u.id = w.user_id
 WHERE w.event_id = $1 AND w.status = 'active'
@@ -365,10 +383,12 @@ type ListActiveWatchesForEventRow struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UserEmail       string             `json:"user_email"`
 	EmailVerifiedAt pgtype.Timestamptz `json:"email_verified_at"`
+	UnsubscribedAt  pgtype.Timestamptz `json:"unsubscribed_at"`
 }
 
-// Includes the owner's email so the notifier can address the alert, and their
-// verification state so the worker can skip mailing unconfirmed addresses.
+// Includes the owner's email so the notifier can address the alert, plus the two
+// states that decide whether we're allowed to mail them at all: verification
+// (did they confirm the address?) and opt-out (did they unsubscribe?).
 func (q *Queries) ListActiveWatchesForEvent(ctx context.Context, eventID int64) ([]ListActiveWatchesForEventRow, error) {
 	rows, err := q.db.Query(ctx, listActiveWatchesForEvent, eventID)
 	if err != nil {
@@ -391,6 +411,7 @@ func (q *Queries) ListActiveWatchesForEvent(ctx context.Context, eventID int64) 
 			&i.CreatedAt,
 			&i.UserEmail,
 			&i.EmailVerifiedAt,
+			&i.UnsubscribedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -658,6 +679,25 @@ type SetLastEvaluationParams struct {
 // Record the latest condition result (drives edge detection on the next poll).
 func (q *Queries) SetLastEvaluation(ctx context.Context, arg SetLastEvaluationParams) error {
 	_, err := q.db.Exec(ctx, setLastEvaluation, arg.ID, arg.LastEvaluation)
+	return err
+}
+
+const setResubscribed = `-- name: SetResubscribed :exec
+UPDATE users SET unsubscribed_at = NULL WHERE id = $1
+`
+
+func (q *Queries) SetResubscribed(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, setResubscribed, id)
+	return err
+}
+
+const setUnsubscribed = `-- name: SetUnsubscribed :exec
+UPDATE users SET unsubscribed_at = now() WHERE id = $1
+`
+
+// Idempotent on purpose: clicking an unsubscribe link twice must not error.
+func (q *Queries) SetUnsubscribed(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, setUnsubscribed, id)
 	return err
 }
 

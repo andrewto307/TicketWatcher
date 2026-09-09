@@ -39,6 +39,19 @@ DELETE FROM auth_tokens WHERE user_id = $1 AND purpose = $2;
 -- name: CountWatchesForUser :one
 SELECT count(*) FROM watches WHERE user_id = $1;
 
+-- name: SetUnsubscribed :exec
+-- Idempotent on purpose: clicking an unsubscribe link twice must not error.
+UPDATE users SET unsubscribed_at = now() WHERE id = $1;
+
+-- name: SetResubscribed :exec
+UPDATE users SET unsubscribed_at = NULL WHERE id = $1;
+
+-- name: DeleteUser :execrows
+-- Right to erasure. watches -> price_snapshots/notifications cascade from the
+-- FKs in 0001_init, and auth_tokens cascades from 0003, so this removes every
+-- trace of the account in one statement.
+DELETE FROM users WHERE id = $1;
+
 -- name: UpsertEventByTMID :one
 INSERT INTO events (tm_event_id, name, url, venue, event_date)
 VALUES ($1, $2, $3, $4, $5)
@@ -90,9 +103,10 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: ListActiveWatchesForEvent :many
--- Includes the owner's email so the notifier can address the alert, and their
--- verification state so the worker can skip mailing unconfirmed addresses.
-SELECT w.*, u.email AS user_email, u.email_verified_at
+-- Includes the owner's email so the notifier can address the alert, plus the two
+-- states that decide whether we're allowed to mail them at all: verification
+-- (did they confirm the address?) and opt-out (did they unsubscribe?).
+SELECT w.*, u.email AS user_email, u.email_verified_at, u.unsubscribed_at
 FROM watches w
 JOIN users u ON u.id = w.user_id
 WHERE w.event_id = $1 AND w.status = 'active';
