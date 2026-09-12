@@ -86,8 +86,8 @@ export function App() {
     <div className="app">
       <header className="app-header">
         <div>
-          <h1>🎟️ Ticket Price Watcher</h1>
-          <p className="tagline">Track live events and get alerted the moment the price drops.</p>
+          <h1>🎟️ Ticket Availability Watcher</h1>
+          <p className="tagline">Track live events and get alerted the moment tickets go on sale.</p>
         </div>
         <button className="logout" onClick={logout}>Log out</button>
       </header>

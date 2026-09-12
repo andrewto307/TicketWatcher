@@ -47,21 +47,19 @@ export function SearchBar({ onWatchCreated }: { onWatchCreated: () => void }) {
 }
 
 function SearchResult({ ev, onWatchCreated }: { ev: EventResult; onWatchCreated: () => void }) {
-  // With no published price, a price_below watch can never trigger. Default such
-  // events to the condition that does work instead of letting someone set up a
-  // watch that silently does nothing.
-  const hasPrice = ev.min_price != null;
-  const [condition, setCondition] = useState(hasPrice ? "price_below" : "becomes_available");
-  const [threshold, setThreshold] = useState("");
   const [busy, setBusy] = useState(false);
+
+  // Watching an event that's already on sale fires on the first poll and tells
+  // the user nothing they can't see right here. Flag it rather than letting them
+  // set up an alert that arrives 15 seconds later saying "it's on sale".
+  const alreadyOnSale = ev.availability === "onsale";
 
   async function addWatch() {
     setBusy(true);
     try {
       await api.createWatch({
         tm_event_id: ev.tm_event_id,
-        condition_type: condition,
-        threshold: condition === "price_below" ? Number(threshold) : undefined,
+        condition_type: "becomes_available",
       });
       onWatchCreated();
     } catch (e) {
@@ -78,35 +76,16 @@ function SearchResult({ ev, onWatchCreated }: { ev: EventResult; onWatchCreated:
         <span className="muted">
           {ev.venue || "—"} · {ev.event_date ? new Date(ev.event_date).toLocaleDateString() : "date TBA"}
         </span>
-        <span className="price">
-          {hasPrice ? `from $${ev.min_price!.toFixed(2)}` : "no price published"} · {ev.availability}
-        </span>
-        {!hasPrice && condition === "price_below" && (
+        <span className="status">{ev.availability}</span>
+        {alreadyOnSale && (
           <span className="warn-text">
-            ⚠ Ticketmaster publishes no price for this event, so a price alert can't trigger. Use
-            “Becomes available” instead.
+            ⚠ Already on sale — you'd only be alerted if it goes off sale and returns.
           </span>
         )}
       </div>
       <div className="result-actions">
-        <select value={condition} onChange={(e) => setCondition(e.target.value)}>
-          <option value="price_below">Price below{hasPrice ? "" : " (no price data)"}</option>
-          <option value="becomes_available">Becomes available</option>
-        </select>
-        {condition === "price_below" && (
-          <input
-            className="thr"
-            type="number"
-            value={threshold}
-            onChange={(e) => setThreshold(e.target.value)}
-            placeholder="$"
-          />
-        )}
-        <button
-          onClick={addWatch}
-          disabled={busy || (condition === "price_below" && !threshold)}
-        >
-          ＋ Watch
+        <button onClick={addWatch} disabled={busy}>
+          ＋ Watch for on-sale
         </button>
       </div>
     </li>

@@ -3,8 +3,12 @@ package ticketmaster
 import "testing"
 
 // A captured-shape Discovery search payload with two events:
-//   1. full data (price, venue, dateTime, onsale)
-//   2. no priceRanges and only a localDate (price unknown, nil date)
+//   1. full data (venue, dateTime, onsale)
+//   2. only a localDate (nil date) and offsale
+//
+// The fixture deliberately keeps the `priceRanges` block that real responses used
+// to carry: Ticketmaster removed it in 2025 (D13) and we no longer parse it, but
+// an unknown field must not break decoding if it ever reappears.
 const searchFixture = `{
   "_embedded": {
     "events": [
@@ -49,12 +53,6 @@ func TestParseSearchResponse(t *testing.T) {
 	if rh.Name != "Radiohead" {
 		t.Errorf("name = %q, want Radiohead", rh.Name)
 	}
-	if rh.MinPrice == nil || *rh.MinPrice != 89.5 {
-		t.Errorf("min price = %v, want 89.5", rh.MinPrice)
-	}
-	if rh.MaxPrice == nil || *rh.MaxPrice != 350 {
-		t.Errorf("max price = %v, want 350", rh.MaxPrice)
-	}
 	if rh.Venue != "Madison Square Garden" {
 		t.Errorf("venue = %q", rh.Venue)
 	}
@@ -65,11 +63,8 @@ func TestParseSearchResponse(t *testing.T) {
 		t.Error("event date = nil, want parsed time")
 	}
 
-	// Event 2: no priceRanges, only localDate -> nil price, nil date.
+	// Event 2: only localDate -> nil date.
 	indie := events[1]
-	if indie.MinPrice != nil || indie.MaxPrice != nil {
-		t.Errorf("expected nil prices, got min=%v max=%v", indie.MinPrice, indie.MaxPrice)
-	}
 	if indie.EventDate != nil {
 		t.Errorf("expected nil event date (only localDate present), got %v", indie.EventDate)
 	}

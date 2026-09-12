@@ -86,7 +86,7 @@ export const api = {
 
   listWatches: () => fetch(`${base}/watches`, { headers: authHeaders() }).then(jProtected<Watch[]>),
 
-  createWatch: (body: { tm_event_id: string; condition_type: string; threshold?: number; poll_interval_s?: number }) =>
+  createWatch: (body: { tm_event_id: string; condition_type: string; poll_interval_s?: number }) =>
     fetch(`${base}/watches`, {
       method: "POST",
       headers: authHeaders({ "content-type": "application/json" }),
@@ -95,7 +95,7 @@ export const api = {
 
   history: (id: number) => fetch(`${base}/watches/${id}/history`, { headers: authHeaders() }).then(jProtected<Snapshot[]>),
 
-  updateWatch: (id: number, body: { threshold?: number; status?: string }) =>
+  updateWatch: (id: number, body: { status?: string }) =>
     fetch(`${base}/watches/${id}`, {
       method: "PATCH",
       headers: authHeaders({ "content-type": "application/json" }),

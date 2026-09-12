@@ -143,7 +143,7 @@ func parseSearchResponse(data []byte) ([]EventSnapshot, error) {
 }
 
 // toSnapshot maps a raw API event onto our normalized EventSnapshot, handling the
-// many optional fields gracefully (missing price, missing time, no venue).
+// optional fields gracefully (missing time, no venue).
 func (e tmEvent) toSnapshot() EventSnapshot {
 	s := EventSnapshot{
 		TMEventID:    e.ID,
@@ -158,19 +158,6 @@ func (e tmEvent) toSnapshot() EventSnapshot {
 		if t, err := time.Parse(time.RFC3339, e.Dates.Start.DateTime); err == nil {
 			s.EventDate = &t
 		}
-	}
-	if len(e.PriceRanges) > 0 {
-		lo, hi := e.PriceRanges[0].Min, e.PriceRanges[0].Max
-		for _, pr := range e.PriceRanges[1:] {
-			if pr.Min < lo {
-				lo = pr.Min
-			}
-			if pr.Max > hi {
-				hi = pr.Max
-			}
-		}
-		s.MinPrice = &lo
-		s.MaxPrice = &hi
 	}
 	return s
 }

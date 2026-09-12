@@ -3,17 +3,18 @@ package ticketmaster
 import "time"
 
 // EventSnapshot is the normalized view of a Ticketmaster event that the rest of
-// the application consumes. Price fields are pointers because the Discovery API
-// does not always return a priceRanges block — nil means "price unknown".
+// the application consumes.
+//
+// There are no price fields: Ticketmaster removed priceRanges from the Discovery
+// API on 2025-03-11 and it now always returns null. See plan/06-design-decisions.md
+// D13.
 type EventSnapshot struct {
 	TMEventID    string     `json:"tm_event_id"`
 	Name         string     `json:"name"`
 	URL          string     `json:"url"`
 	Venue        string     `json:"venue"`
 	EventDate    *time.Time `json:"event_date"`
-	MinPrice     *float64   `json:"min_price"`
-	MaxPrice     *float64   `json:"max_price"`
-	Availability string     `json:"availability"` // onsale | offsale | cancelled | ... | unknown
+	Availability string     `json:"availability"` // onsale | offsale | cancelled | postponed | rescheduled | unknown
 }
 
 // --- internal wire types: only the fields we actually read from the API ---
@@ -25,12 +26,11 @@ type searchResponse struct {
 }
 
 type tmEvent struct {
-	ID          string         `json:"id"`
-	Name        string         `json:"name"`
-	URL         string         `json:"url"`
-	Dates       tmDates        `json:"dates"`
-	PriceRanges []tmPriceRange `json:"priceRanges"`
-	Embedded    tmEmbedded     `json:"_embedded"`
+	ID       string     `json:"id"`
+	Name     string     `json:"name"`
+	URL      string     `json:"url"`
+	Dates    tmDates    `json:"dates"`
+	Embedded tmEmbedded `json:"_embedded"`
 }
 
 type tmEmbedded struct {
@@ -39,12 +39,6 @@ type tmEmbedded struct {
 
 type tmVenue struct {
 	Name string `json:"name"`
-}
-
-type tmPriceRange struct {
-	Type string  `json:"type"`
-	Min  float64 `json:"min"`
-	Max  float64 `json:"max"`
 }
 
 type tmDates struct {

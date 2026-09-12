@@ -19,6 +19,10 @@ import (
 
 // fakeTicketmaster stands in for the Discovery API so the API test needs no
 // network / real key. The real ticketmaster.Client points at this server.
+//
+// The payloads deliberately still carry a priceRanges block. Ticketmaster removed
+// it in 2025 and we no longer parse it (D13), but an unrecognized field must not
+// break decoding — including if it ever comes back.
 func fakeTicketmaster() *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -112,7 +116,7 @@ func TestAPI_AuthAndWatchLifecycle(t *testing.T) {
 	}
 
 	// --- create watch ---
-	if res := req(http.MethodPost, "/api/watches", token, `{"tm_event_id":"TM999","condition_type":"price_below","threshold":100}`); res.StatusCode != http.StatusCreated {
+	if res := req(http.MethodPost, "/api/watches", token, `{"tm_event_id":"TM999","condition_type":"becomes_available"}`); res.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(res.Body)
 		t.Fatalf("create: status=%d body=%s", res.StatusCode, b)
 	} else {
@@ -137,13 +141,13 @@ func TestAPI_AuthAndWatchLifecycle(t *testing.T) {
 		t.Errorf("notifications len=%d, want 0", len(notes))
 	}
 
-	// --- PATCH threshold ---
-	res = req(http.MethodPatch, fmt.Sprintf("/api/watches/%d", id), token, `{"threshold":200}`)
+	// --- PATCH status (pause) ---
+	res = req(http.MethodPatch, fmt.Sprintf("/api/watches/%d", id), token, `{"status":"paused"}`)
 	var updated map[string]any
 	_ = json.NewDecoder(res.Body).Decode(&updated)
 	res.Body.Close()
-	if res.StatusCode != 200 || updated["threshold"].(float64) != 200 {
-		t.Errorf("patch: status=%d threshold=%v, want 200 + 200", res.StatusCode, updated["threshold"])
+	if res.StatusCode != 200 || updated["status"] != "paused" {
+		t.Errorf("patch: status=%d watch status=%v, want 200 + paused", res.StatusCode, updated["status"])
 	}
 
 	// --- PATCH invalid status -> 400 ---

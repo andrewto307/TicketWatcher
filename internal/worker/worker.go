@@ -1,5 +1,5 @@
 // Package worker runs the pool of goroutines that poll events off the jobs channel,
-// write price snapshots on change, evaluate each event's watches, and fire
+// write availability snapshots on change, evaluate each event's watches, and fire
 // edge-triggered alerts.
 package worker
 
@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"ticket-watcher/internal/evaluator"
-	"ticket-watcher/internal/money"
 	"ticket-watcher/internal/notifier"
 	"ticket-watcher/internal/store"
 	"ticket-watcher/internal/store/db"
@@ -21,7 +20,7 @@ import (
 // Store is the slice of the database the worker needs.
 type Store interface {
 	GetEvent(ctx context.Context, id int64) (db.Event, error)
-	InsertPriceSnapshot(ctx context.Context, arg db.InsertPriceSnapshotParams) (db.PriceSnapshot, error)
+	InsertAvailabilitySnapshot(ctx context.Context, arg db.InsertAvailabilitySnapshotParams) (db.AvailabilitySnapshot, error)
 	UpdateEventLatest(ctx context.Context, arg db.UpdateEventLatestParams) error
 	MinPollIntervalForEvent(ctx context.Context, eventID int64) (int32, error)
 	ListActiveWatchesForEvent(ctx context.Context, eventID int64) ([]db.ListActiveWatchesForEventRow, error)
@@ -88,15 +87,14 @@ func ProcessEvent(ctx context.Context, eventID int64, d Deps) error {
 		return fmt.Errorf("poll: %w", err)
 	}
 
-	minC := money.ToCents(snap.MinPrice)
-	maxC := money.ToCents(snap.MaxPrice)
 	avail := snap.Availability
 
-	if changed(ev, minC, maxC, avail) {
-		if _, err := d.Store.InsertPriceSnapshot(ctx, db.InsertPriceSnapshotParams{
+	// Snapshot on change only: a quiet event polled 288x/day would otherwise write
+	// 288 identical rows. The result reads as a clean list of transitions, which is
+	// exactly what matters here — "went on sale at 10:02" is the product.
+	if changed(ev, avail) {
+		if _, err := d.Store.InsertAvailabilitySnapshot(ctx, db.InsertAvailabilitySnapshotParams{
 			EventID:            eventID,
-			MinPriceCents:      minC,
-			MaxPriceCents:      maxC,
 			AvailabilityStatus: &avail,
 		}); err != nil {
 			return fmt.Errorf("insert snapshot: %w", err)
@@ -110,30 +108,28 @@ func ProcessEvent(ctx context.Context, eventID int64, d Deps) error {
 	next := now().Add(time.Duration(interval) * time.Second)
 
 	if err := d.Store.UpdateEventLatest(ctx, db.UpdateEventLatestParams{
-		ID:                eventID,
-		LastMinPriceCents: minC,
-		LastMaxPriceCents: maxC,
-		LastAvailability:  &avail,
-		NextPollAt:        store.TS(next),
+		ID:               eventID,
+		LastAvailability: &avail,
+		NextPollAt:       store.TS(next),
 	}); err != nil {
 		return fmt.Errorf("update event: %w", err)
 	}
 
-	return evaluateWatches(ctx, ev, minC, avail, d)
+	return evaluateWatches(ctx, ev, avail, d)
 }
 
 // evaluateWatches checks each active watch on the event and fires an alert on the
 // rising edge (condition transitions false -> true). It always records the latest
 // evaluation so the next poll can detect the next edge.
-func evaluateWatches(ctx context.Context, ev db.Event, minC *int64, avail string, d Deps) error {
+func evaluateWatches(ctx context.Context, ev db.Event, avail string, d Deps) error {
 	watches, err := d.Store.ListActiveWatchesForEvent(ctx, ev.ID)
 	if err != nil {
 		return fmt.Errorf("list watches: %w", err)
 	}
 	for _, w := range watches {
 		met := evaluator.Met(
-			evaluator.Condition{Type: w.ConditionType, ThresholdCents: w.ThresholdCents},
-			evaluator.Observation{MinPriceCents: minC, Availability: avail},
+			evaluator.Condition{Type: w.ConditionType},
+			evaluator.Observation{Availability: avail},
 		)
 
 		// Rising edge (false -> true). Two consent checks gate delivery: the owner
@@ -159,8 +155,6 @@ func evaluateWatches(ctx context.Context, ev db.Event, minC *int64, avail string
 						Venue:          ev.Venue,
 						EventURL:       ev.Url,
 						ConditionType:  w.ConditionType,
-						ThresholdCents: w.ThresholdCents,
-						MinPriceCents:  minC,
 						Availability:   avail,
 						UnsubscribeURL: unsubURL,
 					})
@@ -178,18 +172,10 @@ func evaluateWatches(ctx context.Context, ev db.Event, minC *int64, avail string
 	return nil
 }
 
-// changed reports whether freshly polled values differ from the event's last state.
-func changed(ev db.Event, minC, maxC *int64, avail string) bool {
-	return !eqInt64Ptr(ev.LastMinPriceCents, minC) ||
-		!eqInt64Ptr(ev.LastMaxPriceCents, maxC) ||
-		!eqStrPtr(ev.LastAvailability, &avail)
-}
-
-func eqInt64Ptr(a, b *int64) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
+// changed reports whether the freshly polled availability differs from the
+// event's last known state.
+func changed(ev db.Event, avail string) bool {
+	return !eqStrPtr(ev.LastAvailability, &avail)
 }
 
 func eqStrPtr(a, b *string) bool {

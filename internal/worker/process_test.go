@@ -18,6 +18,15 @@ import (
 // the precondition for any alert being sent.
 func verified() pgtype.Timestamptz { return store.TS(time.Now()) }
 
+// activeWatch is the common fixture: an active becomes_available watch whose
+// owner is verified and subscribed, i.e. eligible for alerts.
+func activeWatch() db.ListActiveWatchesForEventRow {
+	return db.ListActiveWatchesForEventRow{
+		ID: 1, UserID: 99, ConditionType: "becomes_available", Status: "active",
+		UserEmail: "u@e.com", EmailVerifiedAt: verified(),
+	}
+}
+
 // --- stateful fakes ---
 
 type fakeStore struct {
@@ -29,14 +38,12 @@ type fakeStore struct {
 
 func (f *fakeStore) GetEvent(context.Context, int64) (db.Event, error) { return f.event, nil }
 
-func (f *fakeStore) InsertPriceSnapshot(context.Context, db.InsertPriceSnapshotParams) (db.PriceSnapshot, error) {
+func (f *fakeStore) InsertAvailabilitySnapshot(context.Context, db.InsertAvailabilitySnapshotParams) (db.AvailabilitySnapshot, error) {
 	f.snapshots++
-	return db.PriceSnapshot{}, nil
+	return db.AvailabilitySnapshot{}, nil
 }
 
 func (f *fakeStore) UpdateEventLatest(_ context.Context, arg db.UpdateEventLatestParams) error {
-	f.event.LastMinPriceCents = arg.LastMinPriceCents
-	f.event.LastMaxPriceCents = arg.LastMaxPriceCents
 	f.event.LastAvailability = arg.LastAvailability
 	return nil
 }
@@ -55,12 +62,11 @@ func (f *fakeStore) SetLastEvaluation(_ context.Context, arg db.SetLastEvaluatio
 func (f *fakeStore) MarkNotified(context.Context, int64) error { f.marked++; return nil }
 
 type fakeFetcher struct {
-	min   *float64
 	avail string
 }
 
 func (f *fakeFetcher) GetEvent(context.Context, string) (ticketmaster.EventSnapshot, error) {
-	return ticketmaster.EventSnapshot{TMEventID: "x", Name: "Test", MinPrice: f.min, Availability: f.avail}, nil
+	return ticketmaster.EventSnapshot{TMEventID: "x", Name: "Test", Availability: f.avail}, nil
 }
 
 type fakeNotifier struct {
@@ -70,39 +76,34 @@ type fakeNotifier struct {
 
 func (f *fakeNotifier) Notify(_ context.Context, a notifier.Alert) { f.calls++; f.last = a }
 
-func usd(v float64) *float64 { return &v }
-
-// TestProcessEvent_EdgeTriggered drives a full price sequence through ProcessEvent
-// and asserts alerts fire only on the false->true edge — the crux of Phase 3.
+// TestProcessEvent_EdgeTriggered drives an availability sequence through
+// ProcessEvent and asserts alerts fire only on the false->true edge — the crux
+// of Phase 3. An event that stays on sale must not re-alert every poll.
 func TestProcessEvent_EdgeTriggered(t *testing.T) {
-	thr := int64(20000) // $200.00
 	st := &fakeStore{
 		event: db.Event{ID: 1, TmEventID: "x", Name: "Test"},
-		watch: db.ListActiveWatchesForEventRow{
-			ID: 1, ConditionType: "price_below", ThresholdCents: &thr, Status: "active",
-			UserEmail: "u@e.com", EmailVerifiedAt: verified(),
-		},
+		watch: activeWatch(),
 	}
-	fetch := &fakeFetcher{avail: "onsale"}
+	fetch := &fakeFetcher{}
 	notif := &fakeNotifier{}
 	deps := Deps{Store: st, TM: fetch, Notifier: notif, Now: time.Now}
 
 	seq := []struct {
-		price     float64
+		avail     string
 		wantCalls int // cumulative notifier calls expected after this poll
 	}{
-		{180, 1}, // false -> true : FIRE
-		{190, 1}, // true  -> true : still below, no re-fire
-		{210, 1}, // true  -> false: rose above threshold
-		{150, 2}, // false -> true : FIRE again (re-armed)
+		{"onsale", 1},  // false -> true : FIRE
+		{"onsale", 1},  // true  -> true : still on sale, no re-fire
+		{"offsale", 1}, // true  -> false: sale closed
+		{"onsale", 2},  // false -> true : FIRE again (re-armed)
 	}
 	for i, step := range seq {
-		fetch.min = usd(step.price)
+		fetch.avail = step.avail
 		if err := ProcessEvent(context.Background(), 1, deps); err != nil {
-			t.Fatalf("poll %d ($%.0f): %v", i, step.price, err)
+			t.Fatalf("poll %d (%s): %v", i, step.avail, err)
 		}
 		if notif.calls != step.wantCalls {
-			t.Errorf("after $%.0f: notifier calls = %d, want %d", step.price, notif.calls, step.wantCalls)
+			t.Errorf("after %s: notifier calls = %d, want %d", step.avail, notif.calls, step.wantCalls)
 		}
 	}
 	if st.marked != 2 {
@@ -113,17 +114,42 @@ func TestProcessEvent_EdgeTriggered(t *testing.T) {
 	}
 }
 
-// TestProcessEvent_NeverTrue confirms a watch whose condition stays false never fires.
-func TestProcessEvent_NeverTrue(t *testing.T) {
-	thr := int64(1000) // $10.00 — well below the polled price
+// Snapshots are written only when availability changes, so a quiet event doesn't
+// accumulate identical rows.
+func TestProcessEvent_SnapshotsOnlyOnChange(t *testing.T) {
 	st := &fakeStore{
 		event: db.Event{ID: 1, TmEventID: "x", Name: "Test"},
-		watch: db.ListActiveWatchesForEventRow{
-			ID: 1, ConditionType: "price_below", ThresholdCents: &thr, Status: "active",
-			UserEmail: "u@e.com", EmailVerifiedAt: verified(),
-		},
+		watch: activeWatch(),
 	}
-	fetch := &fakeFetcher{min: usd(288.69), avail: "onsale"}
+	fetch := &fakeFetcher{avail: "offsale"}
+	deps := Deps{Store: st, TM: fetch, Now: time.Now}
+
+	// First poll records the initial state; two more identical polls add nothing.
+	for i := 0; i < 3; i++ {
+		if err := ProcessEvent(context.Background(), 1, deps); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if st.snapshots != 1 {
+		t.Errorf("snapshots = %d after 3 identical polls, want 1", st.snapshots)
+	}
+
+	fetch.avail = "onsale" // a real transition
+	if err := ProcessEvent(context.Background(), 1, deps); err != nil {
+		t.Fatal(err)
+	}
+	if st.snapshots != 2 {
+		t.Errorf("snapshots = %d after a change, want 2", st.snapshots)
+	}
+}
+
+// TestProcessEvent_NeverTrue confirms a watch whose condition stays false never fires.
+func TestProcessEvent_NeverTrue(t *testing.T) {
+	st := &fakeStore{
+		event: db.Event{ID: 1, TmEventID: "x", Name: "Test"},
+		watch: activeWatch(),
+	}
+	fetch := &fakeFetcher{avail: "offsale"} // never on sale
 	notif := &fakeNotifier{}
 	deps := Deps{Store: st, TM: fetch, Notifier: notif, Now: time.Now}
 
@@ -140,15 +166,11 @@ func TestProcessEvent_NeverTrue(t *testing.T) {
 // TestProcessEvent_UnsubscribedUserIsNotAlerted covers the Tier 3 rule: someone
 // who opted out must stop receiving mail, even though their watch still fires.
 func TestProcessEvent_UnsubscribedUserIsNotAlerted(t *testing.T) {
-	thr := int64(20000) // $200.00
-	st := &fakeStore{
-		event: db.Event{ID: 1, TmEventID: "x", Name: "Test"},
-		watch: db.ListActiveWatchesForEventRow{
-			ID: 1, ConditionType: "price_below", ThresholdCents: &thr, Status: "active",
-			UserEmail: "opted-out@e.com", EmailVerifiedAt: verified(), UnsubscribedAt: verified(),
-		},
-	}
-	fetch := &fakeFetcher{min: usd(180), avail: "onsale"} // condition is met
+	w := activeWatch()
+	w.UserEmail, w.UnsubscribedAt = "opted-out@e.com", verified()
+	st := &fakeStore{event: db.Event{ID: 1, TmEventID: "x", Name: "Test"}, watch: w}
+
+	fetch := &fakeFetcher{avail: "onsale"} // condition is met
 	notif := &fakeNotifier{}
 	deps := Deps{Store: st, TM: fetch, Notifier: notif, Now: time.Now}
 
@@ -166,18 +188,41 @@ func TestProcessEvent_UnsubscribedUserIsNotAlerted(t *testing.T) {
 	}
 }
 
+// TestProcessEvent_UnverifiedEmailIsNotAlerted covers the Tier 1 rule: a met
+// condition must not mail an address whose owner never confirmed it. The watch
+// still tracks its evaluation, so it stays armed for after they verify.
+func TestProcessEvent_UnverifiedEmailIsNotAlerted(t *testing.T) {
+	w := activeWatch()
+	w.UserEmail = "unverified@e.com"
+	w.EmailVerifiedAt = pgtype.Timestamptz{} // NULL => unverified
+	st := &fakeStore{event: db.Event{ID: 1, TmEventID: "x", Name: "Test"}, watch: w}
+
+	fetch := &fakeFetcher{avail: "onsale"} // condition is met
+	notif := &fakeNotifier{}
+	deps := Deps{Store: st, TM: fetch, Notifier: notif, Now: time.Now}
+
+	if err := ProcessEvent(context.Background(), 1, deps); err != nil {
+		t.Fatal(err)
+	}
+	if notif.calls != 0 {
+		t.Errorf("notifier calls = %d, want 0 (owner is unverified)", notif.calls)
+	}
+	if st.marked != 0 {
+		t.Errorf("MarkNotified called %d times, want 0 (nothing was sent)", st.marked)
+	}
+	if !st.watch.LastEvaluation {
+		t.Error("last_evaluation = false, want true (the watch must still track the edge)")
+	}
+}
+
 // Every alert must carry the opt-out link, or the unsubscribe requirement is
 // only theoretically satisfied.
 func TestProcessEvent_AlertCarriesUnsubscribeURL(t *testing.T) {
-	thr := int64(20000)
 	st := &fakeStore{
 		event: db.Event{ID: 1, TmEventID: "x", Name: "Test"},
-		watch: db.ListActiveWatchesForEventRow{
-			ID: 1, UserID: 99, ConditionType: "price_below", ThresholdCents: &thr, Status: "active",
-			UserEmail: "u@e.com", EmailVerifiedAt: verified(),
-		},
+		watch: activeWatch(),
 	}
-	fetch := &fakeFetcher{min: usd(180), avail: "onsale"}
+	fetch := &fakeFetcher{avail: "onsale"}
 	notif := &fakeNotifier{}
 	deps := Deps{
 		Store: st, TM: fetch, Notifier: notif, Now: time.Now,
@@ -194,35 +239,5 @@ func TestProcessEvent_AlertCarriesUnsubscribeURL(t *testing.T) {
 	}
 	if got, want := notif.last.UnsubscribeURL, "https://app.test/api/unsubscribe?token=u99"; got != want {
 		t.Errorf("UnsubscribeURL = %q, want %q (built for the watch's owner)", got, want)
-	}
-}
-
-// TestProcessEvent_UnverifiedEmailIsNotAlerted covers the Tier 1 rule: a met
-// condition must not mail an address whose owner never confirmed it. The watch
-// still tracks its evaluation, so it stays armed for after they verify.
-func TestProcessEvent_UnverifiedEmailIsNotAlerted(t *testing.T) {
-	thr := int64(20000) // $200.00
-	st := &fakeStore{
-		event: db.Event{ID: 1, TmEventID: "x", Name: "Test"},
-		watch: db.ListActiveWatchesForEventRow{
-			ID: 1, ConditionType: "price_below", ThresholdCents: &thr, Status: "active",
-			UserEmail: "unverified@e.com", // EmailVerifiedAt left zero => NULL => unverified
-		},
-	}
-	fetch := &fakeFetcher{min: usd(180), avail: "onsale"} // condition is met
-	notif := &fakeNotifier{}
-	deps := Deps{Store: st, TM: fetch, Notifier: notif, Now: time.Now}
-
-	if err := ProcessEvent(context.Background(), 1, deps); err != nil {
-		t.Fatal(err)
-	}
-	if notif.calls != 0 {
-		t.Errorf("notifier calls = %d, want 0 (owner is unverified)", notif.calls)
-	}
-	if st.marked != 0 {
-		t.Errorf("MarkNotified called %d times, want 0 (nothing was sent)", st.marked)
-	}
-	if !st.watch.LastEvaluation {
-		t.Error("last_evaluation = false, want true (the watch must still track the edge)")
 	}
 }

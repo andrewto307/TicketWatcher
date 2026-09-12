@@ -7,8 +7,6 @@ export interface EventResult {
   name: string;
   venue: string;
   event_date: string | null;
-  min_price: number | null;
-  max_price: number | null;
   availability: Availability;
 }
 
@@ -18,11 +16,8 @@ export interface Watch {
   event_name: string;
   venue: string;
   event_date: string | null;
-  condition_type: "price_below" | "becomes_available";
-  threshold: number | null;
+  condition_type: "becomes_available";
   status: "active" | "paused" | "triggered";
-  current_min_price: number | null;
-  current_max_price: number | null;
   availability: Availability | null;
   poll_interval_s: number;
   created_at: string;
@@ -30,8 +25,6 @@ export interface Watch {
 }
 
 export interface Snapshot {
-  min_price: number | null;
-  max_price: number | null;
   availability: string | null;
   checked_at: string;
 }

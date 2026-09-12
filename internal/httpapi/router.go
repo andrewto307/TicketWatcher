@@ -345,10 +345,9 @@ func searchHandler(search *service.SearchService) http.HandlerFunc {
 // --- watches ---
 
 type createWatchRequest struct {
-	TMEventID     string   `json:"tm_event_id"`
-	ConditionType string   `json:"condition_type"`
-	Threshold     *float64 `json:"threshold"`
-	PollIntervalS int32    `json:"poll_interval_s"`
+	TMEventID     string `json:"tm_event_id"`
+	ConditionType string `json:"condition_type"`
+	PollIntervalS int32  `json:"poll_interval_s"`
 }
 
 func createWatchHandler(watches *service.WatchService) http.HandlerFunc {
@@ -362,13 +361,11 @@ func createWatchHandler(watches *service.WatchService) http.HandlerFunc {
 		view, err := watches.Create(r.Context(), userID, service.CreateWatchInput{
 			TMEventID:     req.TMEventID,
 			ConditionType: req.ConditionType,
-			Threshold:     req.Threshold,
 			PollIntervalS: req.PollIntervalS,
 		})
 		if err != nil {
 			switch {
 			case errors.Is(err, service.ErrInvalidCondition),
-				errors.Is(err, service.ErrThresholdRequired),
 				errors.Is(err, service.ErrMissingEventID):
 				writeError(w, http.StatusBadRequest, err.Error())
 			case errors.Is(err, service.ErrWatchLimitReached):
@@ -416,8 +413,7 @@ func watchHistoryHandler(watches *service.WatchService) http.HandlerFunc {
 }
 
 type updateWatchRequest struct {
-	Threshold *float64 `json:"threshold"`
-	Status    *string  `json:"status"`
+	Status *string `json:"status"`
 }
 
 func updateWatchHandler(watches *service.WatchService) http.HandlerFunc {
@@ -433,7 +429,7 @@ func updateWatchHandler(watches *service.WatchService) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid JSON body")
 			return
 		}
-		view, err := watches.Update(r.Context(), userID, id, service.UpdateWatchInput{Threshold: req.Threshold, Status: req.Status})
+		view, err := watches.Update(r.Context(), userID, id, service.UpdateWatchInput{Status: req.Status})
 		if err != nil {
 			if errors.Is(err, service.ErrInvalidStatus) {
 				writeError(w, http.StatusBadRequest, err.Error())

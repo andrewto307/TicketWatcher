@@ -9,8 +9,6 @@ import (
 	"ticket-watcher/internal/store/db"
 )
 
-func cents(v int64) *int64 { return &v }
-
 type fakeSender struct {
 	sent []Message
 	err  error
@@ -29,19 +27,31 @@ func (f *fakeStore) InsertNotification(_ context.Context, arg db.InsertNotificat
 	return db.Notification{ID: int64(len(f.logged))}, nil
 }
 
-func TestRender_PriceBelow(t *testing.T) {
+func TestRender_AddressesAndVenue(t *testing.T) {
 	m := render(Alert{
 		EventName: "Show", Venue: "Arena", ToEmail: "u@e.com",
-		ConditionType: "price_below", MinPriceCents: cents(2869), ThresholdCents: cents(10000),
+		ConditionType: "becomes_available",
 	})
 	if m.To != "u@e.com" {
 		t.Errorf("To = %q", m.To)
 	}
-	if !strings.Contains(m.Subject, "$28.69") {
-		t.Errorf("subject missing price: %q", m.Subject)
+	if !strings.Contains(m.Subject, "Show") {
+		t.Errorf("subject missing event name: %q", m.Subject)
 	}
 	if !strings.Contains(m.HTMLBody, "Arena") {
 		t.Errorf("html missing venue: %q", m.HTMLBody)
+	}
+}
+
+// The alert must not claim seats are in stock: Ticketmaster's status only says the
+// sale window is open, and a sold-out show still reports onsale.
+func TestRender_DoesNotPromiseInventory(t *testing.T) {
+	m := render(Alert{EventName: "Show", ConditionType: "becomes_available"})
+	body := strings.ToLower(m.TextBody)
+	for _, phrase := range []string{"tickets are available", "seats available", "in stock"} {
+		if strings.Contains(body, phrase) {
+			t.Errorf("body overpromises inventory (%q): %s", phrase, m.TextBody)
+		}
 	}
 }
 
