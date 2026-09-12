@@ -64,6 +64,13 @@ section h2 { font-size: 1.1rem; margin: 0 0 12px; display: flex; align-items: ce
 .notice span { flex: 1 1 220px; }
 .notice code { font-size: 0.85em; }
 
+/* Amber variant: not an error, but the user should know something won't work. */
+.notice.warn {
+  background: color-mix(in srgb, #d9a13b 12%, transparent);
+  border-color: color-mix(in srgb, #d9a13b 35%, transparent);
+}
+.warn-text { color: #d9a13b; font-size: 0.82rem; }
+
 button {
   font: inherit; cursor: pointer; border: 1px solid var(--border);
   background: var(--panel); color: var(--text);

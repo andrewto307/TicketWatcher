@@ -47,7 +47,11 @@ export function SearchBar({ onWatchCreated }: { onWatchCreated: () => void }) {
 }
 
 function SearchResult({ ev, onWatchCreated }: { ev: EventResult; onWatchCreated: () => void }) {
-  const [condition, setCondition] = useState("price_below");
+  // With no published price, a price_below watch can never trigger. Default such
+  // events to the condition that does work instead of letting someone set up a
+  // watch that silently does nothing.
+  const hasPrice = ev.min_price != null;
+  const [condition, setCondition] = useState(hasPrice ? "price_below" : "becomes_available");
   const [threshold, setThreshold] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -75,12 +79,18 @@ function SearchResult({ ev, onWatchCreated }: { ev: EventResult; onWatchCreated:
           {ev.venue || "—"} · {ev.event_date ? new Date(ev.event_date).toLocaleDateString() : "date TBA"}
         </span>
         <span className="price">
-          {ev.min_price != null ? `from $${ev.min_price.toFixed(2)}` : "price unknown"} · {ev.availability}
+          {hasPrice ? `from $${ev.min_price!.toFixed(2)}` : "no price published"} · {ev.availability}
         </span>
+        {!hasPrice && condition === "price_below" && (
+          <span className="warn-text">
+            ⚠ Ticketmaster publishes no price for this event, so a price alert can't trigger. Use
+            “Becomes available” instead.
+          </span>
+        )}
       </div>
       <div className="result-actions">
         <select value={condition} onChange={(e) => setCondition(e.target.value)}>
-          <option value="price_below">Price below</option>
+          <option value="price_below">Price below{hasPrice ? "" : " (no price data)"}</option>
           <option value="becomes_available">Becomes available</option>
         </select>
         {condition === "price_below" && (

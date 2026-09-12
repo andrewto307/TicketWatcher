@@ -66,6 +66,10 @@ type WatchView struct {
 	Availability  *string    `json:"availability"`
 	PollIntervalS int32      `json:"poll_interval_s"`
 	CreatedAt     time.Time  `json:"created_at"`
+	// LastPolledAt lets the UI distinguish "not checked yet" from "checked, but
+	// Ticketmaster publishes no price" — both of which otherwise present as a
+	// null price, despite meaning very different things to the user.
+	LastPolledAt *time.Time `json:"last_polled_at"`
 }
 
 // SnapshotView is one point of an event's price history (dollars).
@@ -242,6 +246,7 @@ func watchViewFromEvent(w db.Watch, ev db.Event) WatchView {
 		Availability:  ev.LastAvailability,
 		PollIntervalS: w.PollIntervalS,
 		CreatedAt:     w.CreatedAt.Time,
+		LastPolledAt:  store.TimePtr(ev.LastPolledAt),
 	}
 }
 
@@ -260,5 +265,6 @@ func watchViewFromRow(r db.ListWatchesWithEventRow) WatchView {
 		Availability:  r.LastAvailability,
 		PollIntervalS: r.PollIntervalS,
 		CreatedAt:     r.CreatedAt.Time,
+		LastPolledAt:  store.TimePtr(r.LastPolledAt),
 	}
 }

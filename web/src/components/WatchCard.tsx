@@ -40,6 +40,13 @@ export function WatchCard({ watch, onChanged }: { watch: Watch; onChanged: () =>
 
   const date = watch.event_date ? new Date(watch.event_date).toLocaleDateString() : "date TBA";
 
+  // Ticketmaster's free tier omits prices for many events. Once we've polled and
+  // still have no price, there is nothing for a price_below condition to compare
+  // against — the watch is armed but inert. Say so, rather than leaving the user
+  // to infer it from a dash.
+  const noPrice = watch.current_min_price == null && watch.last_polled_at != null;
+  const inertPriceWatch = noPrice && watch.condition_type === "price_below";
+
   return (
     <div className="card">
       <div className="card-head">
@@ -54,7 +61,11 @@ export function WatchCard({ watch, onChanged }: { watch: Watch; onChanged: () =>
         <div className="metric">
           <span className="muted">current</span>
           <span className="metric-val">
-            {watch.current_min_price != null ? `$${watch.current_min_price.toFixed(2)}` : "—"}
+            {watch.current_min_price != null
+              ? `$${watch.current_min_price.toFixed(2)}`
+              : noPrice
+                ? "no price data"
+                : "checking…"}
           </span>
           <span className="muted">{watch.availability ?? ""}</span>
         </div>
@@ -78,6 +89,17 @@ export function WatchCard({ watch, onChanged }: { watch: Watch; onChanged: () =>
           )}
         </div>
       </div>
+
+      {inertPriceWatch && (
+        <div className="notice warn">
+          <span>
+            <strong>Ticketmaster isn't publishing a price for this event</strong>, so this watch
+            can't trigger — there's nothing to compare against your threshold. It will start
+            working if a price appears. To be alerted about tickets regardless of price, add a
+            “Becomes available” watch instead.
+          </span>
+        </div>
+      )}
 
       <div className="card-actions">
         <button onClick={toggleChart}>{open ? "Hide history" : "Price history"}</button>

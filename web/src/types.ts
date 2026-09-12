@@ -26,6 +26,7 @@ export interface Watch {
   availability: Availability | null;
   poll_interval_s: number;
   created_at: string;
+  last_polled_at: string | null;
 }
 
 export interface Snapshot {
