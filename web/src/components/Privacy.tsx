@@ -7,7 +7,7 @@ export function Privacy() {
       <header className="app-header">
         <div>
           <h1>Privacy Policy</h1>
-          <p className="tagline">Ticket Availability Watcher</p>
+          <p className="tagline">TicketWatcher</p>
         </div>
         <button className="logout" onClick={() => (window.location.href = "/")}>
           Back to app

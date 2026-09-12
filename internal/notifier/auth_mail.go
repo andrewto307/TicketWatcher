@@ -18,13 +18,13 @@ func VerificationMessage(to, link string) Message {
 			`<p style="color:#666;font-size:13px">This link expires in 24 hours. `+
 			`If you didn't create this account, you can ignore this email.</p>`,
 		link)
-	return Message{To: to, Subject: "Confirm your email — Ticket Availability Watcher", HTMLBody: html, TextBody: text}
+	return Message{To: to, Subject: "Confirm your email — TicketWatcher", HTMLBody: html, TextBody: text}
 }
 
 // PasswordResetMessage carries a one-time link to choose a new password.
 func PasswordResetMessage(to, link string) Message {
 	text := fmt.Sprintf(
-		"Reset your Ticket Availability Watcher password:\n\n%s\n\n"+
+		"Reset your TicketWatcher password:\n\n%s\n\n"+
 			"This link expires in 1 hour and can be used once. "+
 			"If you didn't request a reset, ignore this email — your password is unchanged.",
 		link)
@@ -34,5 +34,5 @@ func PasswordResetMessage(to, link string) Message {
 			`<p style="color:#666;font-size:13px">This link expires in 1 hour and can be used once. `+
 			`If you didn't request a reset, ignore this email — your password is unchanged.</p>`,
 		link)
-	return Message{To: to, Subject: "Reset your password — Ticket Availability Watcher", HTMLBody: html, TextBody: text}
+	return Message{To: to, Subject: "Reset your password — TicketWatcher", HTMLBody: html, TextBody: text}
 }
