@@ -49,7 +49,7 @@ export function Login({ onAuthed }: { onAuthed: () => void }) {
   return (
     <div className="auth-wrap">
       <div className="auth-card">
-        <h1>🎟️ Ticket Availability Watcher</h1>
+        <h1>🎟️ TicketWatcher</h1>
         <p className="tagline">{tagline}</p>
 
         {/* Deliberately the same confirmation whether or not the address is

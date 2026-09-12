@@ -37,7 +37,7 @@ export function ResetPassword({ token }: { token: string }) {
   return (
     <div className="auth-wrap">
       <div className="auth-card">
-        <h1>🎟️ Ticket Availability Watcher</h1>
+        <h1>🎟️ TicketWatcher</h1>
         {done ? (
           <>
             <p className="tagline">Your password has been changed.</p>
