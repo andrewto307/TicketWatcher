@@ -18,19 +18,24 @@ type AuthToken struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type AvailabilitySnapshot struct {
+	ID                 int64              `json:"id"`
+	EventID            int64              `json:"event_id"`
+	AvailabilityStatus *string            `json:"availability_status"`
+	CheckedAt          pgtype.Timestamptz `json:"checked_at"`
+}
+
 type Event struct {
-	ID                int64              `json:"id"`
-	TmEventID         string             `json:"tm_event_id"`
-	Name              string             `json:"name"`
-	Url               string             `json:"url"`
-	Venue             string             `json:"venue"`
-	EventDate         pgtype.Timestamptz `json:"event_date"`
-	LastMinPriceCents *int64             `json:"last_min_price_cents"`
-	LastMaxPriceCents *int64             `json:"last_max_price_cents"`
-	LastAvailability  *string            `json:"last_availability"`
-	LastPolledAt      pgtype.Timestamptz `json:"last_polled_at"`
-	NextPollAt        pgtype.Timestamptz `json:"next_poll_at"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	ID               int64              `json:"id"`
+	TmEventID        string             `json:"tm_event_id"`
+	Name             string             `json:"name"`
+	Url              string             `json:"url"`
+	Venue            string             `json:"venue"`
+	EventDate        pgtype.Timestamptz `json:"event_date"`
+	LastAvailability *string            `json:"last_availability"`
+	LastPolledAt     pgtype.Timestamptz `json:"last_polled_at"`
+	NextPollAt       pgtype.Timestamptz `json:"next_poll_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type Notification struct {
@@ -39,15 +44,6 @@ type Notification struct {
 	Channel string             `json:"channel"`
 	SentAt  pgtype.Timestamptz `json:"sent_at"`
 	Payload []byte             `json:"payload"`
-}
-
-type PriceSnapshot struct {
-	ID                 int64              `json:"id"`
-	EventID            int64              `json:"event_id"`
-	MinPriceCents      *int64             `json:"min_price_cents"`
-	MaxPriceCents      *int64             `json:"max_price_cents"`
-	AvailabilityStatus *string            `json:"availability_status"`
-	CheckedAt          pgtype.Timestamptz `json:"checked_at"`
 }
 
 type User struct {
@@ -64,7 +60,6 @@ type Watch struct {
 	UserID         int64              `json:"user_id"`
 	EventID        int64              `json:"event_id"`
 	ConditionType  string             `json:"condition_type"`
-	ThresholdCents *int64             `json:"threshold_cents"`
 	Status         string             `json:"status"`
 	LastEvaluation bool               `json:"last_evaluation"`
 	LastNotifiedAt pgtype.Timestamptz `json:"last_notified_at"`

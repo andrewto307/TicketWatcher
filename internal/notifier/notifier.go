@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log"
 
-	"ticket-watcher/internal/money"
 	"ticket-watcher/internal/store/db"
 )
 
@@ -31,15 +30,13 @@ type Message struct {
 
 // Alert is the raw data a fired watch produces; the notifier renders it to a Message.
 type Alert struct {
-	WatchID        int64
-	ToEmail        string
-	EventName      string
-	Venue          string
-	EventURL       string
-	ConditionType  string
-	ThresholdCents *int64
-	MinPriceCents  *int64
-	Availability   string
+	WatchID       int64
+	ToEmail       string
+	EventName     string
+	Venue         string
+	EventURL      string
+	ConditionType string
+	Availability  string
 	// UnsubscribeURL opts the recipient out of all alerts. Required for every
 	// alert we send; empty only in tests.
 	UnsubscribeURL string
@@ -73,8 +70,6 @@ func (n *Notifier) Notify(ctx context.Context, a Alert) {
 			"subject":      msg.Subject,
 			"event":        a.EventName,
 			"condition":    a.ConditionType,
-			"min_price":    money.ToDollars(a.MinPriceCents),
-			"threshold":    money.ToDollars(a.ThresholdCents),
 			"availability": a.Availability,
 		})
 		if _, err := n.store.InsertNotification(ctx, db.InsertNotificationParams{
@@ -91,13 +86,12 @@ func (n *Notifier) Notify(ctx context.Context, a Alert) {
 func render(a Alert) Message {
 	var subject, line string
 	switch a.ConditionType {
-	case "price_below":
-		price, thr := dollars(a.MinPriceCents), dollars(a.ThresholdCents)
-		subject = fmt.Sprintf("🎟️ Price drop: %s is now %s", a.EventName, price)
-		line = fmt.Sprintf("The minimum price just dropped to %s, below your %s threshold.", price, thr)
 	case "becomes_available":
 		subject = fmt.Sprintf("🎟️ %s is on sale", a.EventName)
-		line = "This event just became available."
+		// Deliberately says "on sale", not "tickets are available": Ticketmaster's
+		// status reports that the sale window is open, and a sold-out show still
+		// reports onsale. Promising stock we can't see would be a lie.
+		line = "This event just went on sale."
 	default:
 		subject = fmt.Sprintf("🎟️ Update: %s", a.EventName)
 		line = "Your watch triggered."
@@ -132,11 +126,4 @@ func render(a Alert) Message {
 		}
 	}
 	return msg
-}
-
-func dollars(cents *int64) string {
-	if d := money.ToDollars(cents); d != nil {
-		return fmt.Sprintf("$%.2f", *d)
-	}
-	return "an unknown price"
 }

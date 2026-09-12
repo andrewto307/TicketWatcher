@@ -8,15 +8,13 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"ticket-watcher/internal/money"
 	"ticket-watcher/internal/store"
 	"ticket-watcher/internal/store/db"
 	"ticket-watcher/internal/ticketmaster"
 )
 
 var (
-	ErrInvalidCondition  = errors.New("condition_type must be 'price_below' or 'becomes_available'")
-	ErrThresholdRequired = errors.New("threshold is required for condition_type 'price_below'")
+	ErrInvalidCondition  = errors.New("condition_type must be 'becomes_available'")
 	ErrMissingEventID    = errors.New("tm_event_id is required")
 	ErrWatchNotFound     = errors.New("watch not found")
 	ErrInvalidStatus     = errors.New("status must be 'active' or 'paused'")
@@ -43,15 +41,14 @@ func NewWatchService(q *db.Queries, tm Fetcher, maxPerUser int) *WatchService {
 	return &WatchService{q: q, tm: tm, maxPerUser: maxPerUser}
 }
 
-// CreateWatchInput is the validated input for creating a watch (dollars).
+// CreateWatchInput is the validated input for creating a watch.
 type CreateWatchInput struct {
 	TMEventID     string
-	ConditionType string
-	Threshold     *float64 // required for price_below
-	PollIntervalS int32    // <= 0 -> default 300
+	ConditionType string // "becomes_available" (the only condition; see D13)
+	PollIntervalS int32  // <= 0 -> default 300
 }
 
-// WatchView is the API representation of a watch: dollars, flattened event info.
+// WatchView is the API representation of a watch, with flattened event info.
 type WatchView struct {
 	ID            int64      `json:"id"`
 	TMEventID     string     `json:"tm_event_id"`
@@ -59,27 +56,24 @@ type WatchView struct {
 	Venue         string     `json:"venue"`
 	EventDate     *time.Time `json:"event_date"`
 	ConditionType string     `json:"condition_type"`
-	Threshold     *float64   `json:"threshold"`
 	Status        string     `json:"status"`
-	CurrentMin    *float64   `json:"current_min_price"`
-	CurrentMax    *float64   `json:"current_max_price"`
 	Availability  *string    `json:"availability"`
 	PollIntervalS int32      `json:"poll_interval_s"`
 	CreatedAt     time.Time  `json:"created_at"`
+	// LastPolledAt lets the UI say "checking…" before the first poll rather than
+	// showing an empty status the user can't interpret.
+	LastPolledAt *time.Time `json:"last_polled_at"`
 }
 
-// SnapshotView is one point of an event's price history (dollars).
+// SnapshotView is one point of an event's availability history.
 type SnapshotView struct {
-	MinPrice     *float64  `json:"min_price"`
-	MaxPrice     *float64  `json:"max_price"`
 	Availability *string   `json:"availability"`
 	CheckedAt    time.Time `json:"checked_at"`
 }
 
 // UpdateWatchInput is a partial update; nil fields are left unchanged.
 type UpdateWatchInput struct {
-	Threshold *float64 // dollars
-	Status    *string  // "active" | "paused"
+	Status *string // "active" | "paused"
 }
 
 // Create validates the input, ensures the event exists (fetching from Ticketmaster
@@ -89,11 +83,8 @@ func (s *WatchService) Create(ctx context.Context, userID int64, in CreateWatchI
 	if in.TMEventID == "" {
 		return WatchView{}, ErrMissingEventID
 	}
-	if in.ConditionType != "price_below" && in.ConditionType != "becomes_available" {
+	if in.ConditionType != "becomes_available" {
 		return WatchView{}, ErrInvalidCondition
-	}
-	if in.ConditionType == "price_below" && in.Threshold == nil {
-		return WatchView{}, ErrThresholdRequired
 	}
 
 	// Check the cap before resolving the event: an over-limit request must not
@@ -132,11 +123,10 @@ func (s *WatchService) Create(ctx context.Context, userID int64, in CreateWatchI
 		interval = 300
 	}
 	w, err := s.q.CreateWatch(ctx, db.CreateWatchParams{
-		UserID:         userID,
-		EventID:        ev.ID,
-		ConditionType:  in.ConditionType,
-		ThresholdCents: money.ToCents(in.Threshold),
-		PollIntervalS:  interval,
+		UserID:        userID,
+		EventID:       ev.ID,
+		ConditionType: in.ConditionType,
+		PollIntervalS: interval,
 	})
 	if err != nil {
 		return WatchView{}, fmt.Errorf("create watch: %w", err)
@@ -164,7 +154,7 @@ func (s *WatchService) List(ctx context.Context, userID int64) ([]WatchView, err
 	return out, nil
 }
 
-// History returns the price-history snapshots for a watch's event.
+// History returns the availability snapshots for a watch's event.
 func (s *WatchService) History(ctx context.Context, userID, watchID int64) ([]SnapshotView, error) {
 	w, err := s.q.GetWatch(ctx, db.GetWatchParams{ID: watchID, UserID: userID})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -180,8 +170,6 @@ func (s *WatchService) History(ctx context.Context, userID, watchID int64) ([]Sn
 	out := make([]SnapshotView, 0, len(snaps))
 	for _, sp := range snaps {
 		out = append(out, SnapshotView{
-			MinPrice:     money.ToDollars(sp.MinPriceCents),
-			MaxPrice:     money.ToDollars(sp.MaxPriceCents),
 			Availability: sp.AvailabilityStatus,
 			CheckedAt:    sp.CheckedAt.Time,
 		})
@@ -189,8 +177,8 @@ func (s *WatchService) History(ctx context.Context, userID, watchID int64) ([]Sn
 	return out, nil
 }
 
-// Update edits a watch's threshold and/or status. Changing the threshold re-arms
-// the watch (resets last_evaluation) so the new condition re-establishes its edge.
+// Update pauses or resumes a watch. Resuming re-arms it (resets last_evaluation)
+// so a condition that is already true re-establishes its edge and can fire again.
 func (s *WatchService) Update(ctx context.Context, userID, watchID int64, in UpdateWatchInput) (WatchView, error) {
 	if in.Status != nil && *in.Status != "active" && *in.Status != "paused" {
 		return WatchView{}, ErrInvalidStatus
@@ -198,9 +186,8 @@ func (s *WatchService) Update(ctx context.Context, userID, watchID int64, in Upd
 	w, err := s.q.UpdateWatch(ctx, db.UpdateWatchParams{
 		ID:              watchID,
 		UserID:          userID,
-		ThresholdCents:  money.ToCents(in.Threshold),
 		Status:          in.Status,
-		ResetEvaluation: in.Threshold != nil,
+		ResetEvaluation: in.Status != nil && *in.Status == "active",
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WatchView{}, ErrWatchNotFound
@@ -235,13 +222,11 @@ func watchViewFromEvent(w db.Watch, ev db.Event) WatchView {
 		Venue:         ev.Venue,
 		EventDate:     store.TimePtr(ev.EventDate),
 		ConditionType: w.ConditionType,
-		Threshold:     money.ToDollars(w.ThresholdCents),
 		Status:        w.Status,
-		CurrentMin:    money.ToDollars(ev.LastMinPriceCents),
-		CurrentMax:    money.ToDollars(ev.LastMaxPriceCents),
 		Availability:  ev.LastAvailability,
 		PollIntervalS: w.PollIntervalS,
 		CreatedAt:     w.CreatedAt.Time,
+		LastPolledAt:  store.TimePtr(ev.LastPolledAt),
 	}
 }
 
@@ -253,12 +238,10 @@ func watchViewFromRow(r db.ListWatchesWithEventRow) WatchView {
 		Venue:         r.Venue,
 		EventDate:     store.TimePtr(r.EventDate),
 		ConditionType: r.ConditionType,
-		Threshold:     money.ToDollars(r.ThresholdCents),
 		Status:        r.Status,
-		CurrentMin:    money.ToDollars(r.LastMinPriceCents),
-		CurrentMax:    money.ToDollars(r.LastMaxPriceCents),
 		Availability:  r.LastAvailability,
 		PollIntervalS: r.PollIntervalS,
 		CreatedAt:     r.CreatedAt.Time,
+		LastPolledAt:  store.TimePtr(r.LastPolledAt),
 	}
 }

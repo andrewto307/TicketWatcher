@@ -4,26 +4,29 @@
 package evaluator
 
 // Condition is a watch's alert rule.
+//
+// Only "becomes_available" exists. A "price_below" condition was removed when
+// Ticketmaster dropped priceRanges from the Discovery API (2025-03-11) — see
+// plan/06-design-decisions.md D13. The Type field is kept rather than collapsed
+// away because this purity is what made removing a condition a one-case change,
+// and it leaves the same room for the next one.
 type Condition struct {
-	Type           string // "price_below" | "becomes_available"
-	ThresholdCents *int64 // required for price_below
+	Type string // "becomes_available"
 }
 
-// Observation is the latest known state of an event (money in integer cents).
+// Observation is the latest known state of an event.
 type Observation struct {
-	MinPriceCents *int64
-	Availability  string
+	Availability string // onsale | offsale | cancelled | postponed | rescheduled | unknown
 }
 
 // Met reports whether the condition currently holds for the observation.
+//
+// Note what "onsale" means: the sale window is open, not that seats are in stock —
+// a sold-out show still reports onsale. Real inventory lives in Ticketmaster's
+// partner-only Inventory Status API. So this detects the offsale -> onsale
+// transition, which is what the product promises.
 func Met(c Condition, o Observation) bool {
 	switch c.Type {
-	case "price_below":
-		// Not met if we have no threshold, or no observed price to compare.
-		if c.ThresholdCents == nil || o.MinPriceCents == nil {
-			return false
-		}
-		return *o.MinPriceCents < *c.ThresholdCents
 	case "becomes_available":
 		return o.Availability == "onsale"
 	default:

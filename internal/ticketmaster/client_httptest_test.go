@@ -23,7 +23,7 @@ func TestClient_Search_OverHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(evs) != 1 || evs[0].Name != "Show" || evs[0].MinPrice == nil || *evs[0].MinPrice != 10 {
+	if len(evs) != 1 || evs[0].Name != "Show" || evs[0].Availability != "onsale" {
 		t.Errorf("bad parse: %+v", evs)
 	}
 }
@@ -38,7 +38,7 @@ func TestClient_GetEvent_OverHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if e.TMEventID != "E1" || e.Availability != "onsale" || e.MinPrice != nil {
+	if e.TMEventID != "E1" || e.Availability != "onsale" {
 		t.Errorf("bad: %+v", e)
 	}
 }

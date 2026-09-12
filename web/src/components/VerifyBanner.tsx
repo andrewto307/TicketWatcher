@@ -25,7 +25,7 @@ export function VerifyBanner({ email }: { email: string }) {
     <div className="notice">
       <span>
         <strong>Confirm your email.</strong> We sent a link to <code>{email}</code>. Until you
-        confirm it, your watches keep tracking prices but alerts won't be emailed.
+        confirm it, your watches keep tracking these events but alerts won't be emailed.
       </span>
       {sent ? (
         <span className="muted">Sent — check your inbox.</span>

@@ -37,17 +37,15 @@ func TestDB_QueryRoundTrips(t *testing.T) {
 		t.Fatalf("upsert dedupe: ev=%d ev2=%d err=%v", ev.ID, ev2.ID, err)
 	}
 
-	thr := int64(20000)
 	w, err := q.CreateWatch(ctx, db.CreateWatchParams{
-		UserID: user.ID, EventID: ev.ID, ConditionType: "price_below", ThresholdCents: &thr, PollIntervalS: 300,
+		UserID: user.ID, EventID: ev.ID, ConditionType: "becomes_available", PollIntervalS: 300,
 	})
 	if err != nil {
 		t.Fatalf("create watch: %v", err)
 	}
 
-	mc := int64(15000)
-	if _, err := q.InsertPriceSnapshot(ctx, db.InsertPriceSnapshotParams{
-		EventID: ev.ID, MinPriceCents: &mc, AvailabilityStatus: strptr("onsale"),
+	if _, err := q.InsertAvailabilitySnapshot(ctx, db.InsertAvailabilitySnapshotParams{
+		EventID: ev.ID, AvailabilityStatus: strptr("onsale"),
 	}); err != nil {
 		t.Fatalf("insert snapshot: %v", err)
 	}

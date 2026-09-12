@@ -154,7 +154,7 @@ func TestCreateWatch_BadInputs(t *testing.T) {
 	tests := []struct{ name, body string }{
 		{"invalid JSON", "not-json"},
 		{"invalid condition", `{"tm_event_id":"x","condition_type":"bogus"}`},
-		{"price_below without threshold", `{"tm_event_id":"x","condition_type":"price_below"}`},
+		{"price_below no longer accepted", `{"tm_event_id":"x","condition_type":"price_below"}`},
 		{"missing event id", `{"condition_type":"becomes_available"}`},
 	}
 	for _, tt := range tests {

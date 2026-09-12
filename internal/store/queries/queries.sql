@@ -47,7 +47,7 @@ UPDATE users SET unsubscribed_at = now() WHERE id = $1;
 UPDATE users SET unsubscribed_at = NULL WHERE id = $1;
 
 -- name: DeleteUser :execrows
--- Right to erasure. watches -> price_snapshots/notifications cascade from the
+-- Right to erasure. watches -> availability_snapshots/notifications cascade from the
 -- FKs in 0001_init, and auth_tokens cascades from 0003, so this removes every
 -- trace of the account in one statement.
 DELETE FROM users WHERE id = $1;
@@ -79,11 +79,9 @@ LIMIT $1;
 
 -- name: UpdateEventLatest :exec
 UPDATE events
-SET last_min_price_cents = $2,
-    last_max_price_cents = $3,
-    last_availability    = $4,
-    last_polled_at       = now(),
-    next_poll_at         = $5
+SET last_availability = $2,
+    last_polled_at    = now(),
+    next_poll_at      = $3
 WHERE id = $1;
 
 -- name: MinPollIntervalForEvent :one
@@ -92,14 +90,14 @@ SELECT COALESCE(MIN(poll_interval_s), 300)::int AS interval_s
 FROM watches
 WHERE event_id = $1 AND status = 'active';
 
--- name: InsertPriceSnapshot :one
-INSERT INTO price_snapshots (event_id, min_price_cents, max_price_cents, availability_status)
-VALUES ($1, $2, $3, $4)
+-- name: InsertAvailabilitySnapshot :one
+INSERT INTO availability_snapshots (event_id, availability_status)
+VALUES ($1, $2)
 RETURNING *;
 
 -- name: CreateWatch :one
-INSERT INTO watches (user_id, event_id, condition_type, threshold_cents, poll_interval_s)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO watches (user_id, event_id, condition_type, poll_interval_s)
+VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: ListActiveWatchesForEvent :many
@@ -117,8 +115,6 @@ SELECT w.*,
        e.name AS event_name,
        e.venue,
        e.event_date,
-       e.last_min_price_cents,
-       e.last_max_price_cents,
        e.last_availability,
        e.last_polled_at
 FROM watches w
@@ -144,14 +140,13 @@ RETURNING *;
 SELECT * FROM watches WHERE id = $1 AND user_id = $2;
 
 -- name: ListSnapshotsForEvent :many
-SELECT * FROM price_snapshots WHERE event_id = $1 ORDER BY checked_at ASC;
+SELECT * FROM availability_snapshots WHERE event_id = $1 ORDER BY checked_at ASC;
 
 -- name: UpdateWatch :one
--- Partial update: NULL args keep the current value. Editing the threshold re-arms
--- the watch (resets last_evaluation) so the new condition re-establishes its edge.
+-- Partial update: a NULL status keeps the current value. reset_evaluation re-arms the
+-- watch so it can fire again on the next false->true edge.
 UPDATE watches
-SET threshold_cents = COALESCE(sqlc.narg('threshold_cents'), threshold_cents),
-    status          = COALESCE(sqlc.narg('status'), status),
+SET status          = COALESCE(sqlc.narg('status'), status),
     last_evaluation = CASE WHEN sqlc.arg('reset_evaluation') THEN false ELSE last_evaluation END
 WHERE id = sqlc.arg('id') AND user_id = sqlc.arg('user_id')
 RETURNING *;

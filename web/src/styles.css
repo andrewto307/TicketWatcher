@@ -64,6 +64,13 @@ section h2 { font-size: 1.1rem; margin: 0 0 12px; display: flex; align-items: ce
 .notice span { flex: 1 1 220px; }
 .notice code { font-size: 0.85em; }
 
+/* Amber variant: not an error, but the user should know something won't work. */
+.notice.warn {
+  background: color-mix(in srgb, #d9a13b 12%, transparent);
+  border-color: color-mix(in srgb, #d9a13b 35%, transparent);
+}
+.warn-text { color: #d9a13b; font-size: 0.82rem; }
+
 button {
   font: inherit; cursor: pointer; border: 1px solid var(--border);
   background: var(--panel); color: var(--text);
@@ -80,7 +87,6 @@ input, select {
   border-radius: 8px; background: var(--panel); color: var(--text);
 }
 input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: -1px; }
-.thr { width: 90px; }
 
 /* search */
 .searchbar { display: flex; gap: 8px; }
@@ -93,7 +99,7 @@ input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 
   background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
 }
 .result-info { display: flex; flex-direction: column; gap: 2px; min-width: 220px; }
-.result-info .price { font-size: 0.85rem; color: var(--muted); }
+.result-info .status { font-size: 0.85rem; color: var(--muted); }
 .result-actions { display: flex; gap: 8px; align-items: center; }
 
 /* watches */
@@ -114,19 +120,19 @@ input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 
 .card-body { display: flex; gap: 24px; margin: 14px 0; flex-wrap: wrap; }
 .metric { display: flex; flex-direction: column; gap: 1px; font-size: 0.9rem; }
 .metric-val { font-size: 1.15rem; font-weight: 600; }
-.edit-thr { display: inline-flex; gap: 6px; align-items: center; }
 
 .card-actions { display: flex; gap: 8px; }
 
-/* chart */
-.chart-wrap { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
-.chart-scroll { overflow-x: auto; }
-.chart { display: block; min-width: 320px; }
-.price-line { stroke: var(--accent); stroke-width: 2; }
-.price-dot { fill: var(--accent); }
-.threshold-line { stroke: var(--danger); stroke-width: 1.5; stroke-dasharray: 5 4; }
-.threshold-label { fill: var(--danger); font-size: 11px; }
-.axis { fill: var(--muted); font-size: 11px; }
+/* status history (replaced the price chart when price watching was removed) */
+.card-history { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
+.status-history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.status-history li { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; }
+.badge.status-onsale { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
+.badge.status-offsale,
+.badge.status-cancelled { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.badge.status-postponed,
+.badge.status-rescheduled { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.badge.status-unknown { color: var(--muted); background: var(--border); }
 
 /* notifications */
 .notif-log { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }

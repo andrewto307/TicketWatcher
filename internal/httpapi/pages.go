@@ -11,7 +11,7 @@ package httpapi
 const unsubscribedPage = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Unsubscribed — Ticket Price Watcher</title>
+<title>Unsubscribed — Ticket Availability Watcher</title>
 <style>
   body{font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;background:#0f1115;color:#e6e8eb;
        display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}
@@ -22,15 +22,15 @@ const unsubscribedPage = `<!doctype html>
 </style></head>
 <body><div class="card">
   <h1>🎟️ You've been unsubscribed</h1>
-  <p>You won't receive any more ticket alerts from Ticket Price Watcher.</p>
+  <p>You won't receive any more ticket alerts from Ticket Availability Watcher.</p>
   <p>Your watches are still saved — you can turn alerts back on any time from your dashboard.</p>
-  <p style="margin-top:20px"><a href="/">Back to Ticket Price Watcher</a></p>
+  <p style="margin-top:20px"><a href="/">Back to Ticket Availability Watcher</a></p>
 </div></body></html>`
 
 const unsubscribeFailedPage = `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Unsubscribe failed — Ticket Price Watcher</title>
+<title>Unsubscribe failed — Ticket Availability Watcher</title>
 <style>
   body{font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;background:#0f1115;color:#e6e8eb;
        display:grid;place-items:center;min-height:100vh;margin:0;padding:20px}
@@ -43,5 +43,5 @@ const unsubscribeFailedPage = `<!doctype html>
   <h1>That unsubscribe link didn't work</h1>
   <p>It may have been altered in transit or copied incompletely.</p>
   <p>You can turn alerts off from your dashboard, or reply to the email and we'll handle it.</p>
-  <p style="margin-top:20px"><a href="/">Back to Ticket Price Watcher</a></p>
+  <p style="margin-top:20px"><a href="/">Back to Ticket Availability Watcher</a></p>
 </div></body></html>`

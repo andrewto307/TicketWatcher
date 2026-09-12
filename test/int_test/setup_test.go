@@ -33,7 +33,7 @@ func setupDB(t *testing.T) *db.Queries {
 		t.Skipf("Postgres unavailable: %v", err)
 	}
 	if _, err := pool.Exec(context.Background(),
-		"TRUNCATE events, watches, price_snapshots, notifications RESTART IDENTITY CASCADE"); err != nil {
+		"TRUNCATE events, watches, availability_snapshots, notifications RESTART IDENTITY CASCADE"); err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
 	t.Cleanup(pool.Close)

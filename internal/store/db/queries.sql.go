@@ -80,17 +80,16 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 }
 
 const createWatch = `-- name: CreateWatch :one
-INSERT INTO watches (user_id, event_id, condition_type, threshold_cents, poll_interval_s)
-VALUES ($1, $2, $3, $4, $5)
-RETURNING id, user_id, event_id, condition_type, threshold_cents, status, last_evaluation, last_notified_at, poll_interval_s, created_at
+INSERT INTO watches (user_id, event_id, condition_type, poll_interval_s)
+VALUES ($1, $2, $3, $4)
+RETURNING id, user_id, event_id, condition_type, status, last_evaluation, last_notified_at, poll_interval_s, created_at
 `
 
 type CreateWatchParams struct {
-	UserID         int64  `json:"user_id"`
-	EventID        int64  `json:"event_id"`
-	ConditionType  string `json:"condition_type"`
-	ThresholdCents *int64 `json:"threshold_cents"`
-	PollIntervalS  int32  `json:"poll_interval_s"`
+	UserID        int64  `json:"user_id"`
+	EventID       int64  `json:"event_id"`
+	ConditionType string `json:"condition_type"`
+	PollIntervalS int32  `json:"poll_interval_s"`
 }
 
 func (q *Queries) CreateWatch(ctx context.Context, arg CreateWatchParams) (Watch, error) {
@@ -98,7 +97,6 @@ func (q *Queries) CreateWatch(ctx context.Context, arg CreateWatchParams) (Watch
 		arg.UserID,
 		arg.EventID,
 		arg.ConditionType,
-		arg.ThresholdCents,
 		arg.PollIntervalS,
 	)
 	var i Watch
@@ -107,7 +105,6 @@ func (q *Queries) CreateWatch(ctx context.Context, arg CreateWatchParams) (Watch
 		&i.UserID,
 		&i.EventID,
 		&i.ConditionType,
-		&i.ThresholdCents,
 		&i.Status,
 		&i.LastEvaluation,
 		&i.LastNotifiedAt,
@@ -137,7 +134,7 @@ const deleteUser = `-- name: DeleteUser :execrows
 DELETE FROM users WHERE id = $1
 `
 
-// Right to erasure. watches -> price_snapshots/notifications cascade from the
+// Right to erasure. watches -> availability_snapshots/notifications cascade from the
 // FKs in 0001_init, and auth_tokens cascades from 0003, so this removes every
 // trace of the account in one statement.
 func (q *Queries) DeleteUser(ctx context.Context, id int64) (int64, error) {
@@ -166,7 +163,7 @@ func (q *Queries) DeleteWatch(ctx context.Context, arg DeleteWatchParams) (int64
 }
 
 const getEvent = `-- name: GetEvent :one
-SELECT id, tm_event_id, name, url, venue, event_date, last_min_price_cents, last_max_price_cents, last_availability, last_polled_at, next_poll_at, created_at FROM events WHERE id = $1
+SELECT id, tm_event_id, name, url, venue, event_date, last_availability, last_polled_at, next_poll_at, created_at FROM events WHERE id = $1
 `
 
 func (q *Queries) GetEvent(ctx context.Context, id int64) (Event, error) {
@@ -179,8 +176,6 @@ func (q *Queries) GetEvent(ctx context.Context, id int64) (Event, error) {
 		&i.Url,
 		&i.Venue,
 		&i.EventDate,
-		&i.LastMinPriceCents,
-		&i.LastMaxPriceCents,
 		&i.LastAvailability,
 		&i.LastPolledAt,
 		&i.NextPollAt,
@@ -190,7 +185,7 @@ func (q *Queries) GetEvent(ctx context.Context, id int64) (Event, error) {
 }
 
 const getEventByTMID = `-- name: GetEventByTMID :one
-SELECT id, tm_event_id, name, url, venue, event_date, last_min_price_cents, last_max_price_cents, last_availability, last_polled_at, next_poll_at, created_at FROM events WHERE tm_event_id = $1
+SELECT id, tm_event_id, name, url, venue, event_date, last_availability, last_polled_at, next_poll_at, created_at FROM events WHERE tm_event_id = $1
 `
 
 func (q *Queries) GetEventByTMID(ctx context.Context, tmEventID string) (Event, error) {
@@ -203,8 +198,6 @@ func (q *Queries) GetEventByTMID(ctx context.Context, tmEventID string) (Event, 
 		&i.Url,
 		&i.Venue,
 		&i.EventDate,
-		&i.LastMinPriceCents,
-		&i.LastMaxPriceCents,
 		&i.LastAvailability,
 		&i.LastPolledAt,
 		&i.NextPollAt,
@@ -280,7 +273,7 @@ func (q *Queries) GetValidAuthToken(ctx context.Context, arg GetValidAuthTokenPa
 }
 
 const getWatch = `-- name: GetWatch :one
-SELECT id, user_id, event_id, condition_type, threshold_cents, status, last_evaluation, last_notified_at, poll_interval_s, created_at FROM watches WHERE id = $1 AND user_id = $2
+SELECT id, user_id, event_id, condition_type, status, last_evaluation, last_notified_at, poll_interval_s, created_at FROM watches WHERE id = $1 AND user_id = $2
 `
 
 type GetWatchParams struct {
@@ -296,12 +289,34 @@ func (q *Queries) GetWatch(ctx context.Context, arg GetWatchParams) (Watch, erro
 		&i.UserID,
 		&i.EventID,
 		&i.ConditionType,
-		&i.ThresholdCents,
 		&i.Status,
 		&i.LastEvaluation,
 		&i.LastNotifiedAt,
 		&i.PollIntervalS,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const insertAvailabilitySnapshot = `-- name: InsertAvailabilitySnapshot :one
+INSERT INTO availability_snapshots (event_id, availability_status)
+VALUES ($1, $2)
+RETURNING id, event_id, availability_status, checked_at
+`
+
+type InsertAvailabilitySnapshotParams struct {
+	EventID            int64   `json:"event_id"`
+	AvailabilityStatus *string `json:"availability_status"`
+}
+
+func (q *Queries) InsertAvailabilitySnapshot(ctx context.Context, arg InsertAvailabilitySnapshotParams) (AvailabilitySnapshot, error) {
+	row := q.db.QueryRow(ctx, insertAvailabilitySnapshot, arg.EventID, arg.AvailabilityStatus)
+	var i AvailabilitySnapshot
+	err := row.Scan(
+		&i.ID,
+		&i.EventID,
+		&i.AvailabilityStatus,
+		&i.CheckedAt,
 	)
 	return i, err
 }
@@ -331,40 +346,8 @@ func (q *Queries) InsertNotification(ctx context.Context, arg InsertNotification
 	return i, err
 }
 
-const insertPriceSnapshot = `-- name: InsertPriceSnapshot :one
-INSERT INTO price_snapshots (event_id, min_price_cents, max_price_cents, availability_status)
-VALUES ($1, $2, $3, $4)
-RETURNING id, event_id, min_price_cents, max_price_cents, availability_status, checked_at
-`
-
-type InsertPriceSnapshotParams struct {
-	EventID            int64   `json:"event_id"`
-	MinPriceCents      *int64  `json:"min_price_cents"`
-	MaxPriceCents      *int64  `json:"max_price_cents"`
-	AvailabilityStatus *string `json:"availability_status"`
-}
-
-func (q *Queries) InsertPriceSnapshot(ctx context.Context, arg InsertPriceSnapshotParams) (PriceSnapshot, error) {
-	row := q.db.QueryRow(ctx, insertPriceSnapshot,
-		arg.EventID,
-		arg.MinPriceCents,
-		arg.MaxPriceCents,
-		arg.AvailabilityStatus,
-	)
-	var i PriceSnapshot
-	err := row.Scan(
-		&i.ID,
-		&i.EventID,
-		&i.MinPriceCents,
-		&i.MaxPriceCents,
-		&i.AvailabilityStatus,
-		&i.CheckedAt,
-	)
-	return i, err
-}
-
 const listActiveWatchesForEvent = `-- name: ListActiveWatchesForEvent :many
-SELECT w.id, w.user_id, w.event_id, w.condition_type, w.threshold_cents, w.status, w.last_evaluation, w.last_notified_at, w.poll_interval_s, w.created_at, u.email AS user_email, u.email_verified_at, u.unsubscribed_at
+SELECT w.id, w.user_id, w.event_id, w.condition_type, w.status, w.last_evaluation, w.last_notified_at, w.poll_interval_s, w.created_at, u.email AS user_email, u.email_verified_at, u.unsubscribed_at
 FROM watches w
 JOIN users u ON u.id = w.user_id
 WHERE w.event_id = $1 AND w.status = 'active'
@@ -375,7 +358,6 @@ type ListActiveWatchesForEventRow struct {
 	UserID          int64              `json:"user_id"`
 	EventID         int64              `json:"event_id"`
 	ConditionType   string             `json:"condition_type"`
-	ThresholdCents  *int64             `json:"threshold_cents"`
 	Status          string             `json:"status"`
 	LastEvaluation  bool               `json:"last_evaluation"`
 	LastNotifiedAt  pgtype.Timestamptz `json:"last_notified_at"`
@@ -403,7 +385,6 @@ func (q *Queries) ListActiveWatchesForEvent(ctx context.Context, eventID int64) 
 			&i.UserID,
 			&i.EventID,
 			&i.ConditionType,
-			&i.ThresholdCents,
 			&i.Status,
 			&i.LastEvaluation,
 			&i.LastNotifiedAt,
@@ -424,7 +405,7 @@ func (q *Queries) ListActiveWatchesForEvent(ctx context.Context, eventID int64) 
 }
 
 const listDueEvents = `-- name: ListDueEvents :many
-SELECT e.id, e.tm_event_id, e.name, e.url, e.venue, e.event_date, e.last_min_price_cents, e.last_max_price_cents, e.last_availability, e.last_polled_at, e.next_poll_at, e.created_at
+SELECT e.id, e.tm_event_id, e.name, e.url, e.venue, e.event_date, e.last_availability, e.last_polled_at, e.next_poll_at, e.created_at
 FROM events e
 WHERE e.next_poll_at <= now()
   AND EXISTS (SELECT 1 FROM watches w WHERE w.event_id = e.id AND w.status = 'active')
@@ -449,8 +430,6 @@ func (q *Queries) ListDueEvents(ctx context.Context, limit int32) ([]Event, erro
 			&i.Url,
 			&i.Venue,
 			&i.EventDate,
-			&i.LastMinPriceCents,
-			&i.LastMaxPriceCents,
 			&i.LastAvailability,
 			&i.LastPolledAt,
 			&i.NextPollAt,
@@ -506,23 +485,21 @@ func (q *Queries) ListNotificationsForUser(ctx context.Context, arg ListNotifica
 }
 
 const listSnapshotsForEvent = `-- name: ListSnapshotsForEvent :many
-SELECT id, event_id, min_price_cents, max_price_cents, availability_status, checked_at FROM price_snapshots WHERE event_id = $1 ORDER BY checked_at ASC
+SELECT id, event_id, availability_status, checked_at FROM availability_snapshots WHERE event_id = $1 ORDER BY checked_at ASC
 `
 
-func (q *Queries) ListSnapshotsForEvent(ctx context.Context, eventID int64) ([]PriceSnapshot, error) {
+func (q *Queries) ListSnapshotsForEvent(ctx context.Context, eventID int64) ([]AvailabilitySnapshot, error) {
 	rows, err := q.db.Query(ctx, listSnapshotsForEvent, eventID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []PriceSnapshot{}
+	items := []AvailabilitySnapshot{}
 	for rows.Next() {
-		var i PriceSnapshot
+		var i AvailabilitySnapshot
 		if err := rows.Scan(
 			&i.ID,
 			&i.EventID,
-			&i.MinPriceCents,
-			&i.MaxPriceCents,
 			&i.AvailabilityStatus,
 			&i.CheckedAt,
 		); err != nil {
@@ -537,13 +514,11 @@ func (q *Queries) ListSnapshotsForEvent(ctx context.Context, eventID int64) ([]P
 }
 
 const listWatchesWithEvent = `-- name: ListWatchesWithEvent :many
-SELECT w.id, w.user_id, w.event_id, w.condition_type, w.threshold_cents, w.status, w.last_evaluation, w.last_notified_at, w.poll_interval_s, w.created_at,
+SELECT w.id, w.user_id, w.event_id, w.condition_type, w.status, w.last_evaluation, w.last_notified_at, w.poll_interval_s, w.created_at,
        e.tm_event_id,
        e.name AS event_name,
        e.venue,
        e.event_date,
-       e.last_min_price_cents,
-       e.last_max_price_cents,
        e.last_availability,
        e.last_polled_at
 FROM watches w
@@ -553,24 +528,21 @@ ORDER BY w.created_at DESC
 `
 
 type ListWatchesWithEventRow struct {
-	ID                int64              `json:"id"`
-	UserID            int64              `json:"user_id"`
-	EventID           int64              `json:"event_id"`
-	ConditionType     string             `json:"condition_type"`
-	ThresholdCents    *int64             `json:"threshold_cents"`
-	Status            string             `json:"status"`
-	LastEvaluation    bool               `json:"last_evaluation"`
-	LastNotifiedAt    pgtype.Timestamptz `json:"last_notified_at"`
-	PollIntervalS     int32              `json:"poll_interval_s"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	TmEventID         string             `json:"tm_event_id"`
-	EventName         string             `json:"event_name"`
-	Venue             string             `json:"venue"`
-	EventDate         pgtype.Timestamptz `json:"event_date"`
-	LastMinPriceCents *int64             `json:"last_min_price_cents"`
-	LastMaxPriceCents *int64             `json:"last_max_price_cents"`
-	LastAvailability  *string            `json:"last_availability"`
-	LastPolledAt      pgtype.Timestamptz `json:"last_polled_at"`
+	ID               int64              `json:"id"`
+	UserID           int64              `json:"user_id"`
+	EventID          int64              `json:"event_id"`
+	ConditionType    string             `json:"condition_type"`
+	Status           string             `json:"status"`
+	LastEvaluation   bool               `json:"last_evaluation"`
+	LastNotifiedAt   pgtype.Timestamptz `json:"last_notified_at"`
+	PollIntervalS    int32              `json:"poll_interval_s"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	TmEventID        string             `json:"tm_event_id"`
+	EventName        string             `json:"event_name"`
+	Venue            string             `json:"venue"`
+	EventDate        pgtype.Timestamptz `json:"event_date"`
+	LastAvailability *string            `json:"last_availability"`
+	LastPolledAt     pgtype.Timestamptz `json:"last_polled_at"`
 }
 
 func (q *Queries) ListWatchesWithEvent(ctx context.Context, userID int64) ([]ListWatchesWithEventRow, error) {
@@ -587,7 +559,6 @@ func (q *Queries) ListWatchesWithEvent(ctx context.Context, userID int64) ([]Lis
 			&i.UserID,
 			&i.EventID,
 			&i.ConditionType,
-			&i.ThresholdCents,
 			&i.Status,
 			&i.LastEvaluation,
 			&i.LastNotifiedAt,
@@ -597,8 +568,6 @@ func (q *Queries) ListWatchesWithEvent(ctx context.Context, userID int64) ([]Lis
 			&i.EventName,
 			&i.Venue,
 			&i.EventDate,
-			&i.LastMinPriceCents,
-			&i.LastMaxPriceCents,
 			&i.LastAvailability,
 			&i.LastPolledAt,
 		); err != nil {
@@ -703,30 +672,20 @@ func (q *Queries) SetUnsubscribed(ctx context.Context, id int64) error {
 
 const updateEventLatest = `-- name: UpdateEventLatest :exec
 UPDATE events
-SET last_min_price_cents = $2,
-    last_max_price_cents = $3,
-    last_availability    = $4,
-    last_polled_at       = now(),
-    next_poll_at         = $5
+SET last_availability = $2,
+    last_polled_at    = now(),
+    next_poll_at      = $3
 WHERE id = $1
 `
 
 type UpdateEventLatestParams struct {
-	ID                int64              `json:"id"`
-	LastMinPriceCents *int64             `json:"last_min_price_cents"`
-	LastMaxPriceCents *int64             `json:"last_max_price_cents"`
-	LastAvailability  *string            `json:"last_availability"`
-	NextPollAt        pgtype.Timestamptz `json:"next_poll_at"`
+	ID               int64              `json:"id"`
+	LastAvailability *string            `json:"last_availability"`
+	NextPollAt       pgtype.Timestamptz `json:"next_poll_at"`
 }
 
 func (q *Queries) UpdateEventLatest(ctx context.Context, arg UpdateEventLatestParams) error {
-	_, err := q.db.Exec(ctx, updateEventLatest,
-		arg.ID,
-		arg.LastMinPriceCents,
-		arg.LastMaxPriceCents,
-		arg.LastAvailability,
-		arg.NextPollAt,
-	)
+	_, err := q.db.Exec(ctx, updateEventLatest, arg.ID, arg.LastAvailability, arg.NextPollAt)
 	return err
 }
 
@@ -746,26 +705,23 @@ func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPassword
 
 const updateWatch = `-- name: UpdateWatch :one
 UPDATE watches
-SET threshold_cents = COALESCE($1, threshold_cents),
-    status          = COALESCE($2, status),
-    last_evaluation = CASE WHEN $3 THEN false ELSE last_evaluation END
-WHERE id = $4 AND user_id = $5
-RETURNING id, user_id, event_id, condition_type, threshold_cents, status, last_evaluation, last_notified_at, poll_interval_s, created_at
+SET status          = COALESCE($1, status),
+    last_evaluation = CASE WHEN $2 THEN false ELSE last_evaluation END
+WHERE id = $3 AND user_id = $4
+RETURNING id, user_id, event_id, condition_type, status, last_evaluation, last_notified_at, poll_interval_s, created_at
 `
 
 type UpdateWatchParams struct {
-	ThresholdCents  *int64  `json:"threshold_cents"`
 	Status          *string `json:"status"`
 	ResetEvaluation bool    `json:"reset_evaluation"`
 	ID              int64   `json:"id"`
 	UserID          int64   `json:"user_id"`
 }
 
-// Partial update: NULL args keep the current value. Editing the threshold re-arms
-// the watch (resets last_evaluation) so the new condition re-establishes its edge.
+// Partial update: a NULL status keeps the current value. reset_evaluation re-arms the
+// watch so it can fire again on the next false->true edge.
 func (q *Queries) UpdateWatch(ctx context.Context, arg UpdateWatchParams) (Watch, error) {
 	row := q.db.QueryRow(ctx, updateWatch,
-		arg.ThresholdCents,
 		arg.Status,
 		arg.ResetEvaluation,
 		arg.ID,
@@ -777,7 +733,6 @@ func (q *Queries) UpdateWatch(ctx context.Context, arg UpdateWatchParams) (Watch
 		&i.UserID,
 		&i.EventID,
 		&i.ConditionType,
-		&i.ThresholdCents,
 		&i.Status,
 		&i.LastEvaluation,
 		&i.LastNotifiedAt,
@@ -795,7 +750,7 @@ ON CONFLICT (tm_event_id) DO UPDATE
         url        = EXCLUDED.url,
         venue      = EXCLUDED.venue,
         event_date = EXCLUDED.event_date
-RETURNING id, tm_event_id, name, url, venue, event_date, last_min_price_cents, last_max_price_cents, last_availability, last_polled_at, next_poll_at, created_at
+RETURNING id, tm_event_id, name, url, venue, event_date, last_availability, last_polled_at, next_poll_at, created_at
 `
 
 type UpsertEventByTMIDParams struct {
@@ -822,8 +777,6 @@ func (q *Queries) UpsertEventByTMID(ctx context.Context, arg UpsertEventByTMIDPa
 		&i.Url,
 		&i.Venue,
 		&i.EventDate,
-		&i.LastMinPriceCents,
-		&i.LastMaxPriceCents,
 		&i.LastAvailability,
 		&i.LastPolledAt,
 		&i.NextPollAt,

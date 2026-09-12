@@ -48,8 +48,8 @@ export function AccountSettings({ me, onChanged }: { me: Me; onChanged: () => vo
       {me.unsubscribed && (
         <div className="notice">
           <span>
-            <strong>Alerts are off.</strong> You unsubscribed, so your watches keep tracking prices
-            but nothing is emailed.
+            <strong>Alerts are off.</strong> You unsubscribed, so your watches keep tracking these
+            events but nothing is emailed.
           </span>
           <button type="button" onClick={resubscribe} disabled={busy}>
             {busy ? "…" : "Turn alerts back on"}
@@ -64,7 +64,7 @@ export function AccountSettings({ me, onChanged }: { me: Me; onChanged: () => vo
       {confirming ? (
         <div className="error">
           <p style={{ marginTop: 0 }}>
-            <strong>This permanently deletes your account</strong> — every watch, its price history,
+            <strong>This permanently deletes your account</strong> — every watch, its status history,
             and your notification log. It cannot be undone.
           </p>
           <p>
