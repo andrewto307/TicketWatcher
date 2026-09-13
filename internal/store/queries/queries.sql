@@ -102,8 +102,10 @@ VALUES ($1, $2)
 RETURNING *;
 
 -- name: CreateWatch :one
-INSERT INTO watches (user_id, event_id, condition_type, poll_interval_s)
-VALUES ($1, $2, $3, $4)
+-- last_evaluation is seeded from the event's current state: if it is already on
+-- sale when the user subscribes, that is not a rising edge and must not alert.
+INSERT INTO watches (user_id, event_id, condition_type, poll_interval_s, last_evaluation)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: ListActiveWatchesForEvent :many

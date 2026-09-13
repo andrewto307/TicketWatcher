@@ -117,24 +117,28 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 }
 
 const createWatch = `-- name: CreateWatch :one
-INSERT INTO watches (user_id, event_id, condition_type, poll_interval_s)
-VALUES ($1, $2, $3, $4)
+INSERT INTO watches (user_id, event_id, condition_type, poll_interval_s, last_evaluation)
+VALUES ($1, $2, $3, $4, $5)
 RETURNING id, user_id, event_id, condition_type, status, last_evaluation, last_notified_at, poll_interval_s, created_at
 `
 
 type CreateWatchParams struct {
-	UserID        int64  `json:"user_id"`
-	EventID       int64  `json:"event_id"`
-	ConditionType string `json:"condition_type"`
-	PollIntervalS int32  `json:"poll_interval_s"`
+	UserID         int64  `json:"user_id"`
+	EventID        int64  `json:"event_id"`
+	ConditionType  string `json:"condition_type"`
+	PollIntervalS  int32  `json:"poll_interval_s"`
+	LastEvaluation bool   `json:"last_evaluation"`
 }
 
+// last_evaluation is seeded from the event's current state: if it is already on
+// sale when the user subscribes, that is not a rising edge and must not alert.
 func (q *Queries) CreateWatch(ctx context.Context, arg CreateWatchParams) (Watch, error) {
 	row := q.db.QueryRow(ctx, createWatch,
 		arg.UserID,
 		arg.EventID,
 		arg.ConditionType,
 		arg.PollIntervalS,
+		arg.LastEvaluation,
 	)
 	var i Watch
 	err := row.Scan(

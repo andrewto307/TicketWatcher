@@ -163,6 +163,7 @@ func evaluateWatches(
 		res := evaluator.Evaluate(obs, evaluator.Prior{
 			KnewPublicStart: knewPublicStart,
 			LastEvaluation:  w.LastEvaluation,
+			WatchCreatedAt:  w.CreatedAt.Time,
 		})
 		if res.CloseWatch {
 			closeEvent = true

@@ -186,3 +186,68 @@ func TestEvaluate_StatusOnsaleAlwaysReported(t *testing.T) {
 		}
 	}
 }
+
+// Regression: a user unchecks the search filter and watches an event that is
+// ALREADY on sale. Nothing has changed since they clicked Watch, so they must
+// not be emailed at all — they saw that state on the search page.
+func TestEvaluate_WatchingAnAlreadyOnsaleEventIsSilent(t *testing.T) {
+	created := now.Add(-time.Minute) // they just added it
+	res := Evaluate(Observation{
+		Now:             now,
+		Availability:    "onsale",
+		PublicStart:     ago(72 * time.Hour),  // on sale for 3 days already
+		PublicEnd:       from(30 * 24 * time.Hour),
+		EarliestPresale: ago(96 * time.Hour),  // presale opened 4 days ago
+		EventDate:       from(60 * 24 * time.Hour),
+	}, Prior{
+		KnewPublicStart: false, // brand-new event, nothing stored
+		LastEvaluation:  true,  // seeded at creation because it was already onsale
+		WatchCreatedAt:  created,
+	})
+
+	if len(res.Kinds) != 0 {
+		t.Errorf("expected no alerts for an already-onsale event, got %v", res.Kinds)
+	}
+}
+
+// An onsale date in the past is not an announcement.
+func TestEvaluate_PastOnsaleDateIsNotAnAnnouncement(t *testing.T) {
+	res := Evaluate(Observation{
+		Now: now, Availability: "offsale",
+		PublicStart: ago(72 * time.Hour), PublicEnd: from(24 * time.Hour),
+		EventDate: from(30 * 24 * time.Hour),
+	}, Prior{KnewPublicStart: false})
+
+	if has(res.Kinds, KindOnsaleAnnounced) {
+		t.Errorf("announced a date that already passed: %v", res.Kinds)
+	}
+}
+
+// But a future date we didn't know about IS an announcement, even on a fresh watch.
+func TestEvaluate_FutureOnsaleDateStillAnnounces(t *testing.T) {
+	res := Evaluate(Observation{
+		Now: now, Availability: "offsale",
+		PublicStart: from(7 * 24 * time.Hour),
+		EventDate:   from(90 * 24 * time.Hour),
+	}, Prior{KnewPublicStart: false, WatchCreatedAt: now.Add(-time.Minute)})
+
+	if !has(res.Kinds, KindOnsaleAnnounced) {
+		t.Errorf("a future onsale date should still announce, got %v", res.Kinds)
+	}
+}
+
+// A presale that opens AFTER the user subscribes must still alert — the
+// suppression is about history, not about muting the watch.
+func TestEvaluate_PresaleOpeningAfterSubscribingStillAlerts(t *testing.T) {
+	created := now.Add(-48 * time.Hour)
+	res := Evaluate(Observation{
+		Now: now, Availability: "offsale",
+		PublicStart:     from(5 * 24 * time.Hour),
+		EarliestPresale: ago(time.Hour), // opened an hour ago, well after they subscribed
+		EventDate:       from(60 * 24 * time.Hour),
+	}, Prior{KnewPublicStart: true, WatchCreatedAt: created})
+
+	if !has(res.Kinds, KindPresaleOpen) {
+		t.Errorf("presale opening after subscription must alert, got %v", res.Kinds)
+	}
+}

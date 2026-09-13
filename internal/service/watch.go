@@ -194,11 +194,15 @@ func (s *WatchService) Create(ctx context.Context, userID int64, in CreateWatchI
 	if interval <= 0 {
 		interval = 300
 	}
+	// Seed the edge state from what the event is doing right now. Without this, an
+	// event that is already on sale looks like a false -> true transition on the
+	// first poll and emails the user something they just read on the search page.
 	w, err := s.q.CreateWatch(ctx, db.CreateWatchParams{
-		UserID:        userID,
-		EventID:       ev.ID,
-		ConditionType: in.ConditionType,
-		PollIntervalS: interval,
+		UserID:         userID,
+		EventID:        ev.ID,
+		ConditionType:  in.ConditionType,
+		PollIntervalS:  interval,
+		LastEvaluation: str(ev.LastAvailability) == "onsale",
 	})
 	if err != nil {
 		return WatchView{}, fmt.Errorf("create watch: %w", err)

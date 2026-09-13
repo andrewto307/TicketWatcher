@@ -81,7 +81,10 @@ function SearchResult({ ev, onWatchCreated }: { ev: EventResult; onWatchCreated:
   // What we can tell the user about this event before they commit to watching it.
   let note: string;
   if (alreadyOnSale) {
-    note = "Already on sale — you'd only be alerted if it goes off sale and returns.";
+    // Accurate as of the milestone rework: milestones already true when you
+    // subscribe are suppressed, so watching this sends nothing until something
+    // actually changes.
+    note = "Already on sale — you'll only hear from us if this changes (goes off sale, is rescheduled, or the sale closes).";
   } else if (onsaleAt) {
     note = `Official sale opens ${onsaleAt}.`;
   } else if (ev.onsale_tbd) {

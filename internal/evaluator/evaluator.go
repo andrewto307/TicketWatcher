@@ -68,6 +68,21 @@ type Prior struct {
 	// LastEvaluation is the previous result of the status-flip fallback, i.e. was
 	// Availability == "onsale" last time. Mirrors watches.last_evaluation.
 	LastEvaluation bool
+
+	// WatchCreatedAt is when the user started watching. Milestones that had
+	// already happened by then are not news: the user saw the event's state on
+	// the search page before clicking Watch, so re-announcing it is noise. Zero
+	// value disables the check.
+	WatchCreatedAt time.Time
+}
+
+// alreadyHappenedBeforeWatch reports whether a milestone at time t predates the
+// user subscribing, in which case it should not be alerted.
+func (p Prior) alreadyHappenedBeforeWatch(t *time.Time) bool {
+	if p.WatchCreatedAt.IsZero() || t == nil {
+		return false
+	}
+	return !t.After(p.WatchCreatedAt)
 }
 
 // Result is the verdict for one poll.
@@ -115,7 +130,10 @@ func Evaluate(o Observation, p Prior) Result {
 	}
 
 	// --- trigger: the onsale date just got announced ---
-	if !p.KnewPublicStart && o.PublicStart != nil {
+	// Only when the announced date is still ahead. If it already passed we are
+	// simply catching up on an event we hadn't seen before, and "the onsale date
+	// has been announced: three days ago" reads as a bug to the recipient.
+	if !p.KnewPublicStart && o.PublicStart != nil && o.PublicStart.After(o.Now) {
 		res.Kinds = append(res.Kinds, KindOnsaleAnnounced)
 	}
 
@@ -127,8 +145,10 @@ func Evaluate(o Observation, p Prior) Result {
 	}
 
 	// --- trigger: a presale is open now ---
-	// Only the earliest window is considered (some events have a dozen).
-	if o.EarliestPresale != nil && !o.EarliestPresale.After(o.Now) {
+	// Only the earliest window is considered (some events have a dozen), and only
+	// if it opened after the user started watching.
+	if o.EarliestPresale != nil && !o.EarliestPresale.After(o.Now) &&
+		!p.alreadyHappenedBeforeWatch(o.EarliestPresale) {
 		res.Kinds = append(res.Kinds, KindPresaleOpen)
 	}
 
@@ -136,7 +156,8 @@ func Evaluate(o Observation, p Prior) Result {
 	// Requires status agreement. On live data status and dates agreed in 880/880
 	// onsale cases, so demanding both costs nothing and blocks the disagreeing
 	// cases (sale ended, event withdrawn) from becoming false alerts.
-	if o.PublicStart != nil && !o.PublicStart.After(o.Now) && res.StatusOnsale {
+	if o.PublicStart != nil && !o.PublicStart.After(o.Now) && res.StatusOnsale &&
+		!p.alreadyHappenedBeforeWatch(o.PublicStart) {
 		res.Kinds = append(res.Kinds, KindPublicOpen)
 	}
 
