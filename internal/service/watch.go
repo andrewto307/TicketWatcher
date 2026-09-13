@@ -63,6 +63,78 @@ type WatchView struct {
 	// LastPolledAt lets the UI say "checking…" before the first poll rather than
 	// showing an empty status the user can't interpret.
 	LastPolledAt *time.Time `json:"last_polled_at"`
+
+	// EventURL is the Ticketmaster page. The UI needs it because resale listings
+	// are invisible to us — "check for resale" has to send the user there.
+	EventURL string `json:"event_url"`
+
+	// The sale calendar, so the UI can say "opens Thu 17 Sep 15:00" instead of
+	// just "not on sale".
+	PublicOnsaleStart   *time.Time `json:"public_onsale_start"`
+	PublicOnsaleEnd     *time.Time `json:"public_onsale_end"`
+	EarliestPresale     *time.Time `json:"earliest_presale"`
+	EarliestPresaleName *string    `json:"earliest_presale_name"`
+	PresaleCount        int32      `json:"presale_count"`
+	OnsaleTBD           bool       `json:"onsale_tbd"`
+
+	// SaleState is the single derived label the UI renders. Computed here rather
+	// than in the frontend so the rule lives next to the evaluator it mirrors.
+	SaleState string `json:"sale_state"`
+}
+
+// Sale states surfaced to the UI.
+const (
+	SaleStateChecking    = "checking" // never polled yet
+	SaleStateCancelled   = "cancelled"
+	SaleStateChanged     = "rescheduled"      // postponed or rescheduled
+	SaleStatePresale     = "presale_open"     // a presale is open now
+	SaleStateOnSale      = "on_sale"          // public sale open
+	SaleStateClosed      = "sale_closed"      // official sale has ended
+	SaleStateScheduled   = "onsale_scheduled" // date known, still ahead
+	SaleStateDateUnknown = "onsale_tbd"       // Ticketmaster hasn't announced a date
+	SaleStateUnknown     = "unknown"
+)
+
+// deriveSaleState mirrors the evaluator's precedence so the UI label and the
+// alerts can never disagree: vetoes first, then closed, then open states, then
+// the waiting states.
+func deriveSaleState(
+	polled bool, availability *string,
+	publicStart, publicEnd, presale *time.Time,
+	onsaleTBD bool, now time.Time,
+) string {
+	if !polled {
+		return SaleStateChecking
+	}
+	switch str(availability) {
+	case "cancelled":
+		return SaleStateCancelled
+	case "postponed", "rescheduled":
+		return SaleStateChanged
+	}
+	if publicEnd != nil && publicEnd.Before(now) {
+		return SaleStateClosed
+	}
+	if str(availability) == "onsale" {
+		return SaleStateOnSale
+	}
+	if presale != nil && !presale.After(now) {
+		return SaleStatePresale
+	}
+	if publicStart != nil {
+		return SaleStateScheduled
+	}
+	if onsaleTBD {
+		return SaleStateDateUnknown
+	}
+	return SaleStateUnknown
+}
+
+func str(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
 
 // SnapshotView is one point of an event's availability history.
@@ -215,33 +287,53 @@ func (s *WatchService) Delete(ctx context.Context, userID, watchID int64) error 
 }
 
 func watchViewFromEvent(w db.Watch, ev db.Event) WatchView {
-	return WatchView{
-		ID:            w.ID,
-		TMEventID:     ev.TmEventID,
-		EventName:     ev.Name,
-		Venue:         ev.Venue,
-		EventDate:     store.TimePtr(ev.EventDate),
-		ConditionType: w.ConditionType,
-		Status:        w.Status,
-		Availability:  ev.LastAvailability,
-		PollIntervalS: w.PollIntervalS,
-		CreatedAt:     w.CreatedAt.Time,
-		LastPolledAt:  store.TimePtr(ev.LastPolledAt),
+	v := WatchView{
+		ID:                  w.ID,
+		TMEventID:           ev.TmEventID,
+		EventName:           ev.Name,
+		Venue:               ev.Venue,
+		EventURL:            ev.Url,
+		EventDate:           store.TimePtr(ev.EventDate),
+		ConditionType:       w.ConditionType,
+		Status:              w.Status,
+		Availability:        ev.LastAvailability,
+		PollIntervalS:       w.PollIntervalS,
+		CreatedAt:           w.CreatedAt.Time,
+		LastPolledAt:        store.TimePtr(ev.LastPolledAt),
+		PublicOnsaleStart:   store.TimePtr(ev.PublicOnsaleAt),
+		PublicOnsaleEnd:     store.TimePtr(ev.PublicOnsaleEndAt),
+		EarliestPresale:     store.TimePtr(ev.EarliestPresaleAt),
+		EarliestPresaleName: ev.EarliestPresaleName,
+		PresaleCount:        ev.PresaleCount,
+		OnsaleTBD:           ev.OnsaleTbd,
 	}
+	v.SaleState = deriveSaleState(ev.LastPolledAt.Valid, ev.LastAvailability,
+		v.PublicOnsaleStart, v.PublicOnsaleEnd, v.EarliestPresale, ev.OnsaleTbd, time.Now())
+	return v
 }
 
 func watchViewFromRow(r db.ListWatchesWithEventRow) WatchView {
-	return WatchView{
-		ID:            r.ID,
-		TMEventID:     r.TmEventID,
-		EventName:     r.EventName,
-		Venue:         r.Venue,
-		EventDate:     store.TimePtr(r.EventDate),
-		ConditionType: r.ConditionType,
-		Status:        r.Status,
-		Availability:  r.LastAvailability,
-		PollIntervalS: r.PollIntervalS,
-		CreatedAt:     r.CreatedAt.Time,
-		LastPolledAt:  store.TimePtr(r.LastPolledAt),
+	v := WatchView{
+		ID:                  r.ID,
+		TMEventID:           r.TmEventID,
+		EventName:           r.EventName,
+		Venue:               r.Venue,
+		EventURL:            r.EventUrl,
+		EventDate:           store.TimePtr(r.EventDate),
+		ConditionType:       r.ConditionType,
+		Status:              r.Status,
+		Availability:        r.LastAvailability,
+		PollIntervalS:       r.PollIntervalS,
+		CreatedAt:           r.CreatedAt.Time,
+		LastPolledAt:        store.TimePtr(r.LastPolledAt),
+		PublicOnsaleStart:   store.TimePtr(r.PublicOnsaleAt),
+		PublicOnsaleEnd:     store.TimePtr(r.PublicOnsaleEndAt),
+		EarliestPresale:     store.TimePtr(r.EarliestPresaleAt),
+		EarliestPresaleName: r.EarliestPresaleName,
+		PresaleCount:        r.PresaleCount,
+		OnsaleTBD:           r.OnsaleTbd,
 	}
+	v.SaleState = deriveSaleState(r.LastPolledAt.Valid, r.LastAvailability,
+		v.PublicOnsaleStart, v.PublicOnsaleEnd, v.EarliestPresale, r.OnsaleTbd, time.Now())
+	return v
 }

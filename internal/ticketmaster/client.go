@@ -35,12 +35,27 @@ func New(baseURL, apiKey string, limiter *ratelimit.Limiter) *Client {
 	}
 }
 
+// SearchOptions tunes an interactive search.
+type SearchOptions struct {
+	// UpcomingOnsalesOnly restricts results to events whose onsale is still ahead,
+	// via Discovery's onsaleOnAfterStartDate filter.
+	//
+	// This matters a lot: an unfiltered keyword search returns ~90% events that are
+	// already on sale, where a watch fires immediately and tells the user nothing.
+	// With the filter, measured results were 20/20 future onsales.
+	UpcomingOnsalesOnly bool
+}
+
 // Search returns events matching a keyword query (interactive traffic).
-func (c *Client) Search(ctx context.Context, keyword string) ([]EventSnapshot, error) {
+func (c *Client) Search(ctx context.Context, keyword string, opt SearchOptions) ([]EventSnapshot, error) {
 	q := url.Values{}
 	q.Set("keyword", keyword)
 	q.Set("apikey", c.apiKey)
 	q.Set("size", "20")
+	if opt.UpcomingOnsalesOnly {
+		// Date-only format; the API rejects a full timestamp on this parameter.
+		q.Set("onsaleOnAfterStartDate", time.Now().UTC().Format("2006-01-02"))
+	}
 
 	body, err := c.do(ctx, ratelimit.ClassSearch, fmt.Sprintf("%s/events.json?%s", c.baseURL, q.Encode()))
 	if err != nil {
@@ -159,7 +174,58 @@ func (e tmEvent) toSnapshot() EventSnapshot {
 			s.EventDate = &t
 		}
 	}
+
+	// Public sale window. A 9999 year is Ticketmaster's placeholder for "onsale
+	// date not announced" — surfaced as OnsaleTBD with a nil date rather than a
+	// date 8000 years out, which every comparison downstream would get wrong.
+	if t, tbd := parseSaleTime(e.Sales.Public.StartDateTime); tbd {
+		s.OnsaleTBD = true
+	} else {
+		s.PublicOnsaleStart = t
+	}
+	// Note: startTBD/startTBA are NOT reliable here — both were false on a live
+	// event carrying the 9999 sentinel, so the year check is the real signal.
+	if e.Sales.Public.StartTBD || e.Sales.Public.StartTBA {
+		s.OnsaleTBD = true
+		s.PublicOnsaleStart = nil
+	}
+	if t, tbd := parseSaleTime(e.Sales.Public.EndDateTime); !tbd {
+		s.PublicOnsaleEnd = t
+	}
+
+	// Earliest presale only. Some events carry a dozen windows (Usher: 12); the
+	// first one is the actionable moment, and alerting on each would be spam.
+	s.PresaleCount = len(e.Sales.Presales)
+	for _, p := range e.Sales.Presales {
+		t, tbd := parseSaleTime(p.StartDateTime)
+		if tbd || t == nil {
+			continue
+		}
+		if s.EarliestPresaleStart == nil || t.Before(*s.EarliestPresaleStart) {
+			s.EarliestPresaleStart = t
+			s.EarliestPresaleName = p.Name
+		}
+	}
 	return s
+}
+
+// sentinelYear is what Ticketmaster returns for an unannounced onsale date.
+const sentinelYear = 9999
+
+// parseSaleTime parses an API timestamp. tbd reports the unannounced-date
+// sentinel; a nil time with tbd=false just means absent or unparseable.
+func parseSaleTime(v string) (t *time.Time, tbd bool) {
+	if v == "" {
+		return nil, false
+	}
+	parsed, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return nil, false
+	}
+	if parsed.Year() >= sentinelYear {
+		return nil, true
+	}
+	return &parsed, false
 }
 
 func normalizeStatus(code string) string {

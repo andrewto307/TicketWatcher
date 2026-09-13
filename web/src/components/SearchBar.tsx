@@ -1,12 +1,16 @@
 import { useState, type FormEvent } from "react";
 import { api } from "../api";
 import type { EventResult } from "../types";
+import { formatSaleTime } from "../saleState";
 
 export function SearchBar({ onWatchCreated }: { onWatchCreated: () => void }) {
   const [q, setQ] = useState("");
-  const [results, setResults] = useState<EventResult[]>([]);
+  const [results, setResults] = useState<EventResult[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Default on: ~90% of unfiltered results are already on sale, where a watch
+  // fires instantly and tells the user nothing they didn't just read.
+  const [upcomingOnly, setUpcomingOnly] = useState(true);
 
   async function doSearch(e: FormEvent) {
     e.preventDefault();
@@ -14,7 +18,7 @@ export function SearchBar({ onWatchCreated }: { onWatchCreated: () => void }) {
     setLoading(true);
     setErr(null);
     try {
-      setResults(await api.search(q));
+      setResults(await api.search(q, upcomingOnly));
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -34,8 +38,29 @@ export function SearchBar({ onWatchCreated }: { onWatchCreated: () => void }) {
           {loading ? "Searching…" : "Search"}
         </button>
       </form>
+
+      <label className="filter-row">
+        <input
+          type="checkbox"
+          checked={upcomingOnly}
+          onChange={(e) => setUpcomingOnly(e.target.checked)}
+        />
+        <span>
+          Only events that haven't gone on sale yet
+          <span className="muted"> — these are the ones worth watching</span>
+        </span>
+      </label>
+
       {err && <div className="error">{err}</div>}
-      {results.length > 0 && (
+
+      {results !== null && results.length === 0 && (
+        <p className="muted">
+          No events found.{" "}
+          {upcomingOnly && "Try unchecking the filter above to include events already on sale."}
+        </p>
+      )}
+
+      {results !== null && results.length > 0 && (
         <ul className="results">
           {results.map((ev) => (
             <SearchResult key={ev.tm_event_id} ev={ev} onWatchCreated={onWatchCreated} />
@@ -48,19 +73,28 @@ export function SearchBar({ onWatchCreated }: { onWatchCreated: () => void }) {
 
 function SearchResult({ ev, onWatchCreated }: { ev: EventResult; onWatchCreated: () => void }) {
   const [busy, setBusy] = useState(false);
+  const [added, setAdded] = useState(false);
 
-  // Watching an event that's already on sale fires on the first poll and tells
-  // the user nothing they can't see right here. Flag it rather than letting them
-  // set up an alert that arrives 15 seconds later saying "it's on sale".
   const alreadyOnSale = ev.availability === "onsale";
+  const onsaleAt = formatSaleTime(ev.public_onsale_start);
+
+  // What we can tell the user about this event before they commit to watching it.
+  let note: string;
+  if (alreadyOnSale) {
+    note = "Already on sale — you'd only be alerted if it goes off sale and returns.";
+  } else if (onsaleAt) {
+    note = `Official sale opens ${onsaleAt}.`;
+  } else if (ev.onsale_tbd) {
+    note = "Onsale date not announced yet — we'll alert you when it is.";
+  } else {
+    note = "Not currently on sale.";
+  }
 
   async function addWatch() {
     setBusy(true);
     try {
-      await api.createWatch({
-        tm_event_id: ev.tm_event_id,
-        condition_type: "becomes_available",
-      });
+      await api.createWatch({ tm_event_id: ev.tm_event_id, condition_type: "becomes_available" });
+      setAdded(true);
       onWatchCreated();
     } catch (e) {
       alert("Could not create watch: " + String(e));
@@ -76,16 +110,20 @@ function SearchResult({ ev, onWatchCreated }: { ev: EventResult; onWatchCreated:
         <span className="muted">
           {ev.venue || "—"} · {ev.event_date ? new Date(ev.event_date).toLocaleDateString() : "date TBA"}
         </span>
-        <span className="status">{ev.availability}</span>
-        {alreadyOnSale && (
-          <span className="warn-text">
-            ⚠ Already on sale — you'd only be alerted if it goes off sale and returns.
+        <span className={alreadyOnSale ? "warn-text" : "status"}>
+          {alreadyOnSale && "⚠ "}
+          {note}
+        </span>
+        {ev.presale_count > 0 && (
+          <span className="muted" style={{ fontSize: "0.8rem" }}>
+            {ev.presale_count} presale{ev.presale_count === 1 ? "" : "s"}
+            {ev.earliest_presale_start && <> · earliest {formatSaleTime(ev.earliest_presale_start)}</>}
           </span>
         )}
       </div>
       <div className="result-actions">
-        <button onClick={addWatch} disabled={busy}>
-          ＋ Watch for on-sale
+        <button onClick={addWatch} disabled={busy || added}>
+          {added ? "✓ Watching" : busy ? "…" : "＋ Watch"}
         </button>
       </div>
     </li>

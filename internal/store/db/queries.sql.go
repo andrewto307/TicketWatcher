@@ -11,6 +11,43 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const claimWatchAlert = `-- name: ClaimWatchAlert :execrows
+INSERT INTO watch_alerts (watch_id, kind)
+VALUES ($1, $2)
+ON CONFLICT (watch_id, kind) DO NOTHING
+`
+
+type ClaimWatchAlertParams struct {
+	WatchID int64  `json:"watch_id"`
+	Kind    string `json:"kind"`
+}
+
+// Exactly-once gate for one (watch, kind) alert. Returns 1 the first time and 0
+// thereafter, so the caller sends the email only when it wins the insert. Doing
+// this as a single statement avoids the read-then-write race a SELECT-then-INSERT
+// would leave open.
+func (q *Queries) ClaimWatchAlert(ctx context.Context, arg ClaimWatchAlertParams) (int64, error) {
+	result, err := q.db.Exec(ctx, claimWatchAlert, arg.WatchID, arg.Kind)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const closeWatchesForEvent = `-- name: CloseWatchesForEvent :execrows
+UPDATE watches SET status = 'paused' WHERE event_id = $1 AND status = 'active'
+`
+
+// Pause every active watch on an event (used when the event date has passed, so
+// the scheduler stops spending API budget on it).
+func (q *Queries) CloseWatchesForEvent(ctx context.Context, eventID int64) (int64, error) {
+	result, err := q.db.Exec(ctx, closeWatchesForEvent, eventID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countWatchesForUser = `-- name: CountWatchesForUser :one
 SELECT count(*) FROM watches WHERE user_id = $1
 `
@@ -163,7 +200,7 @@ func (q *Queries) DeleteWatch(ctx context.Context, arg DeleteWatchParams) (int64
 }
 
 const getEvent = `-- name: GetEvent :one
-SELECT id, tm_event_id, name, url, venue, event_date, last_availability, last_polled_at, next_poll_at, created_at FROM events WHERE id = $1
+SELECT id, tm_event_id, name, url, venue, event_date, last_availability, last_polled_at, next_poll_at, created_at, public_onsale_at, public_onsale_end_at, earliest_presale_at, earliest_presale_name, presale_count, onsale_tbd FROM events WHERE id = $1
 `
 
 func (q *Queries) GetEvent(ctx context.Context, id int64) (Event, error) {
@@ -180,12 +217,18 @@ func (q *Queries) GetEvent(ctx context.Context, id int64) (Event, error) {
 		&i.LastPolledAt,
 		&i.NextPollAt,
 		&i.CreatedAt,
+		&i.PublicOnsaleAt,
+		&i.PublicOnsaleEndAt,
+		&i.EarliestPresaleAt,
+		&i.EarliestPresaleName,
+		&i.PresaleCount,
+		&i.OnsaleTbd,
 	)
 	return i, err
 }
 
 const getEventByTMID = `-- name: GetEventByTMID :one
-SELECT id, tm_event_id, name, url, venue, event_date, last_availability, last_polled_at, next_poll_at, created_at FROM events WHERE tm_event_id = $1
+SELECT id, tm_event_id, name, url, venue, event_date, last_availability, last_polled_at, next_poll_at, created_at, public_onsale_at, public_onsale_end_at, earliest_presale_at, earliest_presale_name, presale_count, onsale_tbd FROM events WHERE tm_event_id = $1
 `
 
 func (q *Queries) GetEventByTMID(ctx context.Context, tmEventID string) (Event, error) {
@@ -202,6 +245,12 @@ func (q *Queries) GetEventByTMID(ctx context.Context, tmEventID string) (Event, 
 		&i.LastPolledAt,
 		&i.NextPollAt,
 		&i.CreatedAt,
+		&i.PublicOnsaleAt,
+		&i.PublicOnsaleEndAt,
+		&i.EarliestPresaleAt,
+		&i.EarliestPresaleName,
+		&i.PresaleCount,
+		&i.OnsaleTbd,
 	)
 	return i, err
 }
@@ -405,7 +454,7 @@ func (q *Queries) ListActiveWatchesForEvent(ctx context.Context, eventID int64) 
 }
 
 const listDueEvents = `-- name: ListDueEvents :many
-SELECT e.id, e.tm_event_id, e.name, e.url, e.venue, e.event_date, e.last_availability, e.last_polled_at, e.next_poll_at, e.created_at
+SELECT e.id, e.tm_event_id, e.name, e.url, e.venue, e.event_date, e.last_availability, e.last_polled_at, e.next_poll_at, e.created_at, e.public_onsale_at, e.public_onsale_end_at, e.earliest_presale_at, e.earliest_presale_name, e.presale_count, e.onsale_tbd
 FROM events e
 WHERE e.next_poll_at <= now()
   AND EXISTS (SELECT 1 FROM watches w WHERE w.event_id = e.id AND w.status = 'active')
@@ -434,10 +483,40 @@ func (q *Queries) ListDueEvents(ctx context.Context, limit int32) ([]Event, erro
 			&i.LastPolledAt,
 			&i.NextPollAt,
 			&i.CreatedAt,
+			&i.PublicOnsaleAt,
+			&i.PublicOnsaleEndAt,
+			&i.EarliestPresaleAt,
+			&i.EarliestPresaleName,
+			&i.PresaleCount,
+			&i.OnsaleTbd,
 		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFiredAlertKinds = `-- name: ListFiredAlertKinds :many
+SELECT kind FROM watch_alerts WHERE watch_id = $1
+`
+
+func (q *Queries) ListFiredAlertKinds(ctx context.Context, watchID int64) ([]string, error) {
+	rows, err := q.db.Query(ctx, listFiredAlertKinds, watchID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var kind string
+		if err := rows.Scan(&kind); err != nil {
+			return nil, err
+		}
+		items = append(items, kind)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -518,9 +597,16 @@ SELECT w.id, w.user_id, w.event_id, w.condition_type, w.status, w.last_evaluatio
        e.tm_event_id,
        e.name AS event_name,
        e.venue,
+       e.url AS event_url,
        e.event_date,
        e.last_availability,
-       e.last_polled_at
+       e.last_polled_at,
+       e.public_onsale_at,
+       e.public_onsale_end_at,
+       e.earliest_presale_at,
+       e.earliest_presale_name,
+       e.presale_count,
+       e.onsale_tbd
 FROM watches w
 JOIN events e ON e.id = w.event_id
 WHERE w.user_id = $1
@@ -528,21 +614,28 @@ ORDER BY w.created_at DESC
 `
 
 type ListWatchesWithEventRow struct {
-	ID               int64              `json:"id"`
-	UserID           int64              `json:"user_id"`
-	EventID          int64              `json:"event_id"`
-	ConditionType    string             `json:"condition_type"`
-	Status           string             `json:"status"`
-	LastEvaluation   bool               `json:"last_evaluation"`
-	LastNotifiedAt   pgtype.Timestamptz `json:"last_notified_at"`
-	PollIntervalS    int32              `json:"poll_interval_s"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	TmEventID        string             `json:"tm_event_id"`
-	EventName        string             `json:"event_name"`
-	Venue            string             `json:"venue"`
-	EventDate        pgtype.Timestamptz `json:"event_date"`
-	LastAvailability *string            `json:"last_availability"`
-	LastPolledAt     pgtype.Timestamptz `json:"last_polled_at"`
+	ID                  int64              `json:"id"`
+	UserID              int64              `json:"user_id"`
+	EventID             int64              `json:"event_id"`
+	ConditionType       string             `json:"condition_type"`
+	Status              string             `json:"status"`
+	LastEvaluation      bool               `json:"last_evaluation"`
+	LastNotifiedAt      pgtype.Timestamptz `json:"last_notified_at"`
+	PollIntervalS       int32              `json:"poll_interval_s"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	TmEventID           string             `json:"tm_event_id"`
+	EventName           string             `json:"event_name"`
+	Venue               string             `json:"venue"`
+	EventUrl            string             `json:"event_url"`
+	EventDate           pgtype.Timestamptz `json:"event_date"`
+	LastAvailability    *string            `json:"last_availability"`
+	LastPolledAt        pgtype.Timestamptz `json:"last_polled_at"`
+	PublicOnsaleAt      pgtype.Timestamptz `json:"public_onsale_at"`
+	PublicOnsaleEndAt   pgtype.Timestamptz `json:"public_onsale_end_at"`
+	EarliestPresaleAt   pgtype.Timestamptz `json:"earliest_presale_at"`
+	EarliestPresaleName *string            `json:"earliest_presale_name"`
+	PresaleCount        int32              `json:"presale_count"`
+	OnsaleTbd           bool               `json:"onsale_tbd"`
 }
 
 func (q *Queries) ListWatchesWithEvent(ctx context.Context, userID int64) ([]ListWatchesWithEventRow, error) {
@@ -567,9 +660,16 @@ func (q *Queries) ListWatchesWithEvent(ctx context.Context, userID int64) ([]Lis
 			&i.TmEventID,
 			&i.EventName,
 			&i.Venue,
+			&i.EventUrl,
 			&i.EventDate,
 			&i.LastAvailability,
 			&i.LastPolledAt,
+			&i.PublicOnsaleAt,
+			&i.PublicOnsaleEndAt,
+			&i.EarliestPresaleAt,
+			&i.EarliestPresaleName,
+			&i.PresaleCount,
+			&i.OnsaleTbd,
 		); err != nil {
 			return nil, err
 		}
@@ -672,20 +772,42 @@ func (q *Queries) SetUnsubscribed(ctx context.Context, id int64) error {
 
 const updateEventLatest = `-- name: UpdateEventLatest :exec
 UPDATE events
-SET last_availability = $2,
-    last_polled_at    = now(),
-    next_poll_at      = $3
+SET last_availability     = $2,
+    public_onsale_at      = $3,
+    public_onsale_end_at  = $4,
+    earliest_presale_at   = $5,
+    earliest_presale_name = $6,
+    presale_count         = $7,
+    onsale_tbd            = $8,
+    last_polled_at        = now(),
+    next_poll_at          = $9
 WHERE id = $1
 `
 
 type UpdateEventLatestParams struct {
-	ID               int64              `json:"id"`
-	LastAvailability *string            `json:"last_availability"`
-	NextPollAt       pgtype.Timestamptz `json:"next_poll_at"`
+	ID                  int64              `json:"id"`
+	LastAvailability    *string            `json:"last_availability"`
+	PublicOnsaleAt      pgtype.Timestamptz `json:"public_onsale_at"`
+	PublicOnsaleEndAt   pgtype.Timestamptz `json:"public_onsale_end_at"`
+	EarliestPresaleAt   pgtype.Timestamptz `json:"earliest_presale_at"`
+	EarliestPresaleName *string            `json:"earliest_presale_name"`
+	PresaleCount        int32              `json:"presale_count"`
+	OnsaleTbd           bool               `json:"onsale_tbd"`
+	NextPollAt          pgtype.Timestamptz `json:"next_poll_at"`
 }
 
 func (q *Queries) UpdateEventLatest(ctx context.Context, arg UpdateEventLatestParams) error {
-	_, err := q.db.Exec(ctx, updateEventLatest, arg.ID, arg.LastAvailability, arg.NextPollAt)
+	_, err := q.db.Exec(ctx, updateEventLatest,
+		arg.ID,
+		arg.LastAvailability,
+		arg.PublicOnsaleAt,
+		arg.PublicOnsaleEndAt,
+		arg.EarliestPresaleAt,
+		arg.EarliestPresaleName,
+		arg.PresaleCount,
+		arg.OnsaleTbd,
+		arg.NextPollAt,
+	)
 	return err
 }
 
@@ -750,7 +872,7 @@ ON CONFLICT (tm_event_id) DO UPDATE
         url        = EXCLUDED.url,
         venue      = EXCLUDED.venue,
         event_date = EXCLUDED.event_date
-RETURNING id, tm_event_id, name, url, venue, event_date, last_availability, last_polled_at, next_poll_at, created_at
+RETURNING id, tm_event_id, name, url, venue, event_date, last_availability, last_polled_at, next_poll_at, created_at, public_onsale_at, public_onsale_end_at, earliest_presale_at, earliest_presale_name, presale_count, onsale_tbd
 `
 
 type UpsertEventByTMIDParams struct {
@@ -781,6 +903,12 @@ func (q *Queries) UpsertEventByTMID(ctx context.Context, arg UpsertEventByTMIDPa
 		&i.LastPolledAt,
 		&i.NextPollAt,
 		&i.CreatedAt,
+		&i.PublicOnsaleAt,
+		&i.PublicOnsaleEndAt,
+		&i.EarliestPresaleAt,
+		&i.EarliestPresaleName,
+		&i.PresaleCount,
+		&i.OnsaleTbd,
 	)
 	return i, err
 }

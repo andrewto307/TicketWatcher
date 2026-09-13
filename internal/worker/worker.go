@@ -1,6 +1,6 @@
 // Package worker runs the pool of goroutines that poll events off the jobs channel,
-// write availability snapshots on change, evaluate each event's watches, and fire
-// edge-triggered alerts.
+// write availability snapshots on change, evaluate each event's sale milestones, and
+// fire edge-triggered alerts.
 package worker
 
 import (
@@ -26,6 +26,10 @@ type Store interface {
 	ListActiveWatchesForEvent(ctx context.Context, eventID int64) ([]db.ListActiveWatchesForEventRow, error)
 	SetLastEvaluation(ctx context.Context, arg db.SetLastEvaluationParams) error
 	MarkNotified(ctx context.Context, id int64) error
+	// ClaimWatchAlert returns 1 the first time a (watch, kind) pair is claimed and
+	// 0 afterwards, which is what makes each milestone alert fire exactly once.
+	ClaimWatchAlert(ctx context.Context, arg db.ClaimWatchAlertParams) (int64, error)
+	CloseWatchesForEvent(ctx context.Context, eventID int64) (int64, error)
 }
 
 // Fetcher is the slice of the Ticketmaster client the worker needs.
@@ -68,8 +72,9 @@ func StartPool(ctx context.Context, n int, jobs <-chan int64, deps Deps, wg *syn
 	}
 }
 
-// ProcessEvent polls one event, writes a snapshot if anything changed, reschedules
-// it, then evaluates its active watches and fires edge-triggered alerts.
+// ProcessEvent polls one event, writes a snapshot if availability changed,
+// reschedules it, then evaluates its active watches and fires alerts for any
+// sale milestone the user hasn't been told about yet.
 func ProcessEvent(ctx context.Context, eventID int64, d Deps) error {
 	now := d.Now
 	if now == nil {
@@ -107,69 +112,148 @@ func ProcessEvent(ctx context.Context, eventID int64, d Deps) error {
 	}
 	next := now().Add(time.Duration(interval) * time.Second)
 
+	// Capture whether we already knew the onsale date *before* overwriting it —
+	// that false -> true transition is what makes an announcement detectable.
+	knewPublicStart := ev.PublicOnsaleAt.Valid
+
 	if err := d.Store.UpdateEventLatest(ctx, db.UpdateEventLatestParams{
-		ID:               eventID,
-		LastAvailability: &avail,
-		NextPollAt:       store.TS(next),
+		ID:                  eventID,
+		LastAvailability:    &avail,
+		PublicOnsaleAt:      store.TSPtr(snap.PublicOnsaleStart),
+		PublicOnsaleEndAt:   store.TSPtr(snap.PublicOnsaleEnd),
+		EarliestPresaleAt:   store.TSPtr(snap.EarliestPresaleStart),
+		EarliestPresaleName: strPtr(snap.EarliestPresaleName),
+		PresaleCount:        int32(snap.PresaleCount),
+		OnsaleTbd:           snap.OnsaleTBD,
+		NextPollAt:          store.TS(next),
 	}); err != nil {
 		return fmt.Errorf("update event: %w", err)
 	}
 
-	return evaluateWatches(ctx, ev, avail, d)
+	obs := evaluator.Observation{
+		Now:             now(),
+		Availability:    avail,
+		PublicStart:     snap.PublicOnsaleStart,
+		PublicEnd:       snap.PublicOnsaleEnd,
+		OnsaleTBD:       snap.OnsaleTBD,
+		EarliestPresale: snap.EarliestPresaleStart,
+		EventDate:       store.TimePtr(ev.EventDate),
+	}
+
+	return evaluateWatches(ctx, ev, snap, obs, knewPublicStart, d)
 }
 
-// evaluateWatches checks each active watch on the event and fires an alert on the
-// rising edge (condition transitions false -> true). It always records the latest
-// evaluation so the next poll can detect the next edge.
-func evaluateWatches(ctx context.Context, ev db.Event, avail string, d Deps) error {
+// evaluateWatches runs the milestone rules for each active watch and sends the
+// alerts that haven't fired yet.
+func evaluateWatches(
+	ctx context.Context,
+	ev db.Event,
+	snap ticketmaster.EventSnapshot,
+	obs evaluator.Observation,
+	knewPublicStart bool,
+	d Deps,
+) error {
 	watches, err := d.Store.ListActiveWatchesForEvent(ctx, ev.ID)
 	if err != nil {
 		return fmt.Errorf("list watches: %w", err)
 	}
-	for _, w := range watches {
-		met := evaluator.Met(
-			evaluator.Condition{Type: w.ConditionType},
-			evaluator.Observation{Availability: avail},
-		)
 
-		// Rising edge (false -> true). Two consent checks gate delivery: the owner
-		// must have confirmed the address, and must not have opted out. Either way
-		// the evaluation below is still recorded, so the watch stays correctly
-		// armed and nothing silently drifts out of sync.
-		if met && !w.LastEvaluation {
+	closeEvent := false
+	for _, w := range watches {
+		res := evaluator.Evaluate(obs, evaluator.Prior{
+			KnewPublicStart: knewPublicStart,
+			LastEvaluation:  w.LastEvaluation,
+		})
+		if res.CloseWatch {
+			closeEvent = true
+		}
+
+		for _, kind := range res.Kinds {
+			// Most kinds are level conditions: the evaluator reports them on every
+			// poll while they hold, so the claim table is what makes them fire once.
+			// The insert *is* the lock — if another poller already sent this
+			// milestone we get 0 rows and stay quiet, with no read-then-write race.
+			if needsClaim(kind) {
+				claimed, err := d.Store.ClaimWatchAlert(ctx, db.ClaimWatchAlertParams{
+					WatchID: w.ID, Kind: string(kind),
+				})
+				if err != nil {
+					return fmt.Errorf("claim alert %s: %w", kind, err)
+				}
+				if claimed == 0 {
+					continue // already told this user about this milestone
+				}
+			}
+
+			// Consent gates. Checked after the claim so a withheld alert isn't
+			// re-attempted on every poll for the rest of the event's life.
 			switch {
 			case !w.EmailVerifiedAt.Valid:
-				log.Printf("worker: watch %d fired but %s is unverified — alert withheld", w.ID, w.UserEmail)
+				log.Printf("worker: watch %d %s but %s is unverified — alert withheld", w.ID, kind, w.UserEmail)
+				continue
 			case w.UnsubscribedAt.Valid:
-				log.Printf("worker: watch %d fired but %s has unsubscribed — alert withheld", w.ID, w.UserEmail)
-			default:
-				if d.Notifier != nil {
-					var unsubURL string
-					if d.UnsubscribeURL != nil {
-						unsubURL = d.UnsubscribeURL(w.UserID)
-					}
-					d.Notifier.Notify(ctx, notifier.Alert{
-						WatchID:        w.ID,
-						ToEmail:        w.UserEmail,
-						EventName:      ev.Name,
-						Venue:          ev.Venue,
-						EventURL:       ev.Url,
-						ConditionType:  w.ConditionType,
-						Availability:   avail,
-						UnsubscribeURL: unsubURL,
-					})
+				log.Printf("worker: watch %d %s but %s has unsubscribed — alert withheld", w.ID, kind, w.UserEmail)
+				continue
+			}
+
+			if d.Notifier != nil {
+				var unsubURL string
+				if d.UnsubscribeURL != nil {
+					unsubURL = d.UnsubscribeURL(w.UserID)
 				}
-				if err := d.Store.MarkNotified(ctx, w.ID); err != nil {
-					return fmt.Errorf("mark notified: %w", err)
-				}
+				d.Notifier.Notify(ctx, notifier.Alert{
+					WatchID:              w.ID,
+					ToEmail:              w.UserEmail,
+					EventName:            ev.Name,
+					Venue:                ev.Venue,
+					EventURL:             ev.Url,
+					Kind:                 string(kind),
+					Availability:         obs.Availability,
+					PublicOnsaleStart:    snap.PublicOnsaleStart,
+					EarliestPresaleStart: snap.EarliestPresaleStart,
+					EarliestPresaleName:  snap.EarliestPresaleName,
+					OnsaleTBD:            snap.OnsaleTBD,
+					UnsubscribeURL:       unsubURL,
+				})
+			}
+			if err := d.Store.MarkNotified(ctx, w.ID); err != nil {
+				return fmt.Errorf("mark notified: %w", err)
 			}
 		}
 
-		if err := d.Store.SetLastEvaluation(ctx, db.SetLastEvaluationParams{ID: w.ID, LastEvaluation: met}); err != nil {
+		if err := d.Store.SetLastEvaluation(ctx, db.SetLastEvaluationParams{
+			ID: w.ID, LastEvaluation: res.StatusOnsale,
+		}); err != nil {
 			return fmt.Errorf("set last evaluation: %w", err)
 		}
 	}
+
+	// The event is over (or cancelled): pause its watches so the scheduler stops
+	// spending API budget on something that can never change again.
+	if closeEvent {
+		n, err := d.Store.CloseWatchesForEvent(ctx, ev.ID)
+		if err != nil {
+			return fmt.Errorf("close watches: %w", err)
+		}
+		if n > 0 {
+			log.Printf("worker: event %d is over or cancelled — paused %d watch(es), polling stops", ev.ID, n)
+		}
+	}
 	return nil
+}
+
+// needsClaim reports whether a kind must be deduplicated through watch_alerts.
+//
+// KindStatusOnsale is exempt: the evaluator only emits it on a rising
+// offsale -> onsale edge (gated by last_evaluation), so it is already once-per-
+// transition. Claiming it as well would permanently suppress the *next* edge —
+// an event that sells out and later re-opens would never alert again, which is
+// exactly the case the edge-trigger design exists to catch (06 D2).
+//
+// Every other kind is a level condition that holds across many polls, so the
+// claim table is what turns it into a single alert.
+func needsClaim(k evaluator.Kind) bool {
+	return k != evaluator.KindStatusOnsale
 }
 
 // changed reports whether the freshly polled availability differs from the
@@ -183,4 +267,13 @@ func eqStrPtr(a, b *string) bool {
 		return a == b
 	}
 	return *a == *b
+}
+
+// strPtr returns nil for an empty string so the column stays NULL rather than
+// holding a meaningless "".
+func strPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

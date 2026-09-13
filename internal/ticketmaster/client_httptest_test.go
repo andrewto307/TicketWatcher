@@ -19,7 +19,7 @@ func TestClient_Search_OverHTTP(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	evs, err := New(srv.URL, "k", nil).Search(context.Background(), "x")
+	evs, err := New(srv.URL, "k", nil).Search(context.Background(), "x", SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestClient_Retries429ThenSucceeds(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := New(srv.URL, "k", nil).Search(context.Background(), "x"); err != nil {
+	if _, err := New(srv.URL, "k", nil).Search(context.Background(), "x", SearchOptions{}); err != nil {
 		t.Fatalf("should succeed after one 429 retry: %v", err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
@@ -70,7 +70,7 @@ func TestClient_Non200IsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := New(srv.URL, "k", nil).Search(context.Background(), "x"); err == nil {
+	if _, err := New(srv.URL, "k", nil).Search(context.Background(), "x", SearchOptions{}); err == nil {
 		t.Error("expected an error on HTTP 500")
 	}
 }

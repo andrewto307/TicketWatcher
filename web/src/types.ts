@@ -6,15 +6,36 @@ export interface EventResult {
   tm_event_id: string;
   name: string;
   venue: string;
+  url: string;
   event_date: string | null;
   availability: Availability;
+  public_onsale_start: string | null;
+  public_onsale_end: string | null;
+  earliest_presale_start: string | null;
+  earliest_presale_name: string;
+  presale_count: number;
+  onsale_tbd: boolean;
 }
+
+// Derived server-side (service.deriveSaleState) so the UI label can never
+// disagree with the alerting rules.
+export type SaleState =
+  | "checking"
+  | "cancelled"
+  | "rescheduled"
+  | "presale_open"
+  | "on_sale"
+  | "sale_closed"
+  | "onsale_scheduled"
+  | "onsale_tbd"
+  | "unknown";
 
 export interface Watch {
   id: number;
   tm_event_id: string;
   event_name: string;
   venue: string;
+  event_url: string;
   event_date: string | null;
   condition_type: "becomes_available";
   status: "active" | "paused" | "triggered";
@@ -22,6 +43,13 @@ export interface Watch {
   poll_interval_s: number;
   created_at: string;
   last_polled_at: string | null;
+  public_onsale_start: string | null;
+  public_onsale_end: string | null;
+  earliest_presale: string | null;
+  earliest_presale_name: string | null;
+  presale_count: number;
+  onsale_tbd: boolean;
+  sale_state: SaleState;
 }
 
 export interface Snapshot {

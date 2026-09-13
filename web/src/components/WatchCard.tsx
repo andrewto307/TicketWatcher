@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api";
 import type { Snapshot, Watch } from "../types";
 import { StatusHistory } from "./StatusHistory";
+import { saleCopy, formatSaleTime } from "../saleState";
 
 export function WatchCard({ watch, onChanged }: { watch: Watch; onChanged: () => void }) {
   const [open, setOpen] = useState(false);
@@ -31,15 +32,7 @@ export function WatchCard({ watch, onChanged }: { watch: Watch; onChanged: () =>
   }
 
   const date = watch.event_date ? new Date(watch.event_date).toLocaleDateString() : "date TBA";
-
-  const polled = watch.last_polled_at != null;
-  const status = watch.availability ?? "unknown";
-
-  // Already on sale when the watch was created: the condition is true from the
-  // first poll, so it fires immediately and tells the user nothing they didn't
-  // already see in the search results. Worth saying, since ~90% of events are
-  // already onsale and this is the default path into a useless alert.
-  const alreadyOnSale = polled && status === "onsale";
+  const copy = saleCopy(watch);
 
   return (
     <div className="card">
@@ -48,27 +41,27 @@ export function WatchCard({ watch, onChanged }: { watch: Watch; onChanged: () =>
           <strong>{watch.event_name}</strong>
           <div className="muted">{watch.venue || "—"} · {date}</div>
         </div>
-        <span className={`badge ${watch.status}`}>{watch.status}</span>
+        <span className={`badge sale-${copy.tone}`}>{copy.label}</span>
       </div>
 
-      <div className="card-body">
-        <div className="metric">
-          <span className="muted">status</span>
-          <span className="metric-val">{polled ? status : "checking…"}</span>
-        </div>
-        <div className="metric">
-          <span className="muted">alerts when</span>
-          <span>it goes on sale</span>
-        </div>
+      <div className={`sale-box sale-${copy.tone}`}>
+        <p className="sale-headline">{copy.headline}</p>
+        {copy.guidance && <p className="sale-guidance">{copy.guidance}</p>}
+        {copy.cta && watch.event_url && (
+          <a className="sale-cta" href={watch.event_url} target="_blank" rel="noopener noreferrer">
+            {copy.cta} →
+          </a>
+        )}
       </div>
 
-      {alreadyOnSale && (
-        <div className="notice warn">
-          <span>
-            <strong>This event is already on sale.</strong> You'll only be alerted if it goes off
-            sale and returns. Watches are most useful on events that haven't opened yet.
-          </span>
-        </div>
+      {/* The presale list is the closest thing we have to a resale signal: if a
+          presale has already opened, tickets are likely circulating. */}
+      {watch.presale_count > 0 && (
+        <p className="muted sale-meta">
+          {watch.presale_count} presale{watch.presale_count === 1 ? "" : "s"}
+          {watch.earliest_presale && <> · earliest {formatSaleTime(watch.earliest_presale)}</>}
+          {watch.earliest_presale_name && <> ({watch.earliest_presale_name})</>}
+        </p>
       )}
 
       <div className="card-actions">

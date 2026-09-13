@@ -79,9 +79,15 @@ LIMIT $1;
 
 -- name: UpdateEventLatest :exec
 UPDATE events
-SET last_availability = $2,
-    last_polled_at    = now(),
-    next_poll_at      = $3
+SET last_availability     = $2,
+    public_onsale_at      = $3,
+    public_onsale_end_at  = $4,
+    earliest_presale_at   = $5,
+    earliest_presale_name = $6,
+    presale_count         = $7,
+    onsale_tbd            = $8,
+    last_polled_at        = now(),
+    next_poll_at          = $9
 WHERE id = $1;
 
 -- name: MinPollIntervalForEvent :one
@@ -114,9 +120,16 @@ SELECT w.*,
        e.tm_event_id,
        e.name AS event_name,
        e.venue,
+       e.url AS event_url,
        e.event_date,
        e.last_availability,
-       e.last_polled_at
+       e.last_polled_at,
+       e.public_onsale_at,
+       e.public_onsale_end_at,
+       e.earliest_presale_at,
+       e.earliest_presale_name,
+       e.presale_count,
+       e.onsale_tbd
 FROM watches w
 JOIN events e ON e.id = w.event_id
 WHERE w.user_id = $1
@@ -166,3 +179,20 @@ LIMIT $2;
 -- new watch is created so it is evaluated promptly instead of waiting for the
 -- event's next scheduled poll.
 UPDATE events SET next_poll_at = now() WHERE id = $1;
+
+-- name: ClaimWatchAlert :execrows
+-- Exactly-once gate for one (watch, kind) alert. Returns 1 the first time and 0
+-- thereafter, so the caller sends the email only when it wins the insert. Doing
+-- this as a single statement avoids the read-then-write race a SELECT-then-INSERT
+-- would leave open.
+INSERT INTO watch_alerts (watch_id, kind)
+VALUES ($1, $2)
+ON CONFLICT (watch_id, kind) DO NOTHING;
+
+-- name: ListFiredAlertKinds :many
+SELECT kind FROM watch_alerts WHERE watch_id = $1;
+
+-- name: CloseWatchesForEvent :execrows
+-- Pause every active watch on an event (used when the event date has passed, so
+-- the scheduler stops spending API budget on it).
+UPDATE watches SET status = 'paused' WHERE event_id = $1 AND status = 'active';

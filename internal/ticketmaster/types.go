@@ -15,6 +15,23 @@ type EventSnapshot struct {
 	Venue        string     `json:"venue"`
 	EventDate    *time.Time `json:"event_date"`
 	Availability string     `json:"availability"` // onsale | offsale | cancelled | postponed | rescheduled | unknown
+
+	// --- the sale calendar, from the API's `sales` block ---
+	// See plan/08-sale-milestone-alerts.md. Status alone flips only when the
+	// *public* sale opens, so these dates are what make presale and
+	// "date announced" alerts possible.
+
+	// PublicOnsaleStart is nil when unknown. OnsaleTBD distinguishes "Ticketmaster
+	// hasn't announced a date" from "the field was absent".
+	PublicOnsaleStart *time.Time `json:"public_onsale_start"`
+	PublicOnsaleEnd   *time.Time `json:"public_onsale_end"`
+	OnsaleTBD         bool       `json:"onsale_tbd"`
+
+	// Earliest presale window, and how many there are. Only the earliest triggers
+	// an alert (some events carry a dozen); the count is for display.
+	EarliestPresaleStart *time.Time `json:"earliest_presale_start"`
+	EarliestPresaleName  string     `json:"earliest_presale_name"`
+	PresaleCount         int        `json:"presale_count"`
 }
 
 // --- internal wire types: only the fields we actually read from the API ---
@@ -30,6 +47,7 @@ type tmEvent struct {
 	Name     string     `json:"name"`
 	URL      string     `json:"url"`
 	Dates    tmDates    `json:"dates"`
+	Sales    tmSales    `json:"sales"`
 	Embedded tmEmbedded `json:"_embedded"`
 }
 
@@ -53,4 +71,22 @@ type tmStart struct {
 
 type tmStatus struct {
 	Code string `json:"code"`
+}
+
+type tmSales struct {
+	Public   tmPublicSale `json:"public"`
+	Presales []tmPresale  `json:"presales"`
+}
+
+type tmPublicSale struct {
+	StartDateTime string `json:"startDateTime"` // may be the 9999-12-31 sentinel
+	EndDateTime   string `json:"endDateTime"`
+	StartTBD      bool   `json:"startTBD"`
+	StartTBA      bool   `json:"startTBA"`
+}
+
+type tmPresale struct {
+	StartDateTime string `json:"startDateTime"`
+	EndDateTime   string `json:"endDateTime"`
+	Name          string `json:"name"`
 }

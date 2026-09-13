@@ -328,7 +328,10 @@ func deleteAccountHandler(accounts *service.AccountService) http.HandlerFunc {
 
 func searchHandler(search *service.SearchService) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		results, err := search.Search(r.Context(), r.URL.Query().Get("q"))
+		// upcoming=1 restricts to events whose onsale hasn't started — the only
+		// ones where a watch produces a useful alert.
+		upcoming := r.URL.Query().Get("upcoming") == "1"
+		results, err := search.Search(r.Context(), r.URL.Query().Get("q"), upcoming)
 		if err != nil {
 			if errors.Is(err, service.ErrEmptyQuery) {
 				writeError(w, http.StatusBadRequest, "query parameter 'q' is required")

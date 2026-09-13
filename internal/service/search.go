@@ -24,9 +24,13 @@ func NewSearchService(tm *ticketmaster.Client) *SearchService {
 }
 
 // Search validates the query and returns matching events.
-func (s *SearchService) Search(ctx context.Context, q string) ([]ticketmaster.EventSnapshot, error) {
+//
+// upcomingOnsalesOnly restricts results to events whose onsale has not started.
+// Without it ~90% of results are already on sale, where a watch fires on the first
+// poll and tells the user nothing they didn't just read on screen.
+func (s *SearchService) Search(ctx context.Context, q string, upcomingOnsalesOnly bool) ([]ticketmaster.EventSnapshot, error) {
 	if q == "" {
 		return nil, ErrEmptyQuery
 	}
-	return s.tm.Search(ctx, q)
+	return s.tm.Search(ctx, q, ticketmaster.SearchOptions{UpcomingOnsalesOnly: upcomingOnsalesOnly})
 }

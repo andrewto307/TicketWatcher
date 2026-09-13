@@ -81,8 +81,12 @@ export const api = {
       body: JSON.stringify({ token, password }),
     }).then(jEmpty),
 
-  search: (q: string) =>
-    fetch(`${base}/search?q=${encodeURIComponent(q)}`, { headers: authHeaders() }).then(jProtected<EventResult[]>),
+  // upcomingOnly restricts results to events whose onsale hasn't started — the
+  // only ones where a watch produces a useful alert.
+  search: (q: string, upcomingOnly = false) =>
+    fetch(`${base}/search?q=${encodeURIComponent(q)}${upcomingOnly ? "&upcoming=1" : ""}`, {
+      headers: authHeaders(),
+    }).then(jProtected<EventResult[]>),
 
   listWatches: () => fetch(`${base}/watches`, { headers: authHeaders() }).then(jProtected<Watch[]>),
 

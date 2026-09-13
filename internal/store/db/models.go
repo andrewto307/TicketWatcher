@@ -26,16 +26,22 @@ type AvailabilitySnapshot struct {
 }
 
 type Event struct {
-	ID               int64              `json:"id"`
-	TmEventID        string             `json:"tm_event_id"`
-	Name             string             `json:"name"`
-	Url              string             `json:"url"`
-	Venue            string             `json:"venue"`
-	EventDate        pgtype.Timestamptz `json:"event_date"`
-	LastAvailability *string            `json:"last_availability"`
-	LastPolledAt     pgtype.Timestamptz `json:"last_polled_at"`
-	NextPollAt       pgtype.Timestamptz `json:"next_poll_at"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	ID                  int64              `json:"id"`
+	TmEventID           string             `json:"tm_event_id"`
+	Name                string             `json:"name"`
+	Url                 string             `json:"url"`
+	Venue               string             `json:"venue"`
+	EventDate           pgtype.Timestamptz `json:"event_date"`
+	LastAvailability    *string            `json:"last_availability"`
+	LastPolledAt        pgtype.Timestamptz `json:"last_polled_at"`
+	NextPollAt          pgtype.Timestamptz `json:"next_poll_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	PublicOnsaleAt      pgtype.Timestamptz `json:"public_onsale_at"`
+	PublicOnsaleEndAt   pgtype.Timestamptz `json:"public_onsale_end_at"`
+	EarliestPresaleAt   pgtype.Timestamptz `json:"earliest_presale_at"`
+	EarliestPresaleName *string            `json:"earliest_presale_name"`
+	PresaleCount        int32              `json:"presale_count"`
+	OnsaleTbd           bool               `json:"onsale_tbd"`
 }
 
 type Notification struct {
@@ -65,4 +71,10 @@ type Watch struct {
 	LastNotifiedAt pgtype.Timestamptz `json:"last_notified_at"`
 	PollIntervalS  int32              `json:"poll_interval_s"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type WatchAlert struct {
+	WatchID int64              `json:"watch_id"`
+	Kind    string             `json:"kind"`
+	FiredAt pgtype.Timestamptz `json:"fired_at"`
 }
