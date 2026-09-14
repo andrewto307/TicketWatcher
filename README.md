@@ -48,8 +48,8 @@ Alerts are written to a `watch_alerts` table with a primary key that makes a
 repeat insert a no-op, so a retry or a restart mid-send can't produce a duplicate
 email. Everything a user was sent is visible in the UI's notification history.
 
-Ticketmaster's free tier is a hard budget (5 req/s, 5,000 req/day), so all
-outbound calls go through a shared rate limiter with a per-second token bucket and
+The Ticketmaster API caps you at 5 req/s and 5,000 req/day, so all outbound
+calls go through a shared rate limiter with a per-second token bucket and
 a separate daily quota for polling versus interactive search — a busy poll loop
 can't starve someone typing in the search box.
 
@@ -108,8 +108,8 @@ test/int_test      end-to-end tests against a real database
 
 ## Running locally
 
-Requires Go 1.25+, Node 20+, Docker, and a Ticketmaster API key
-([get one here](https://developer.ticketmaster.com/my-apps) — it's free).
+Requires Go 1.25+, Node 20+, Docker, and a
+[Ticketmaster API key](https://developer.ticketmaster.com/my-apps).
 
 ```bash
 cp .env.example .env      # then fill in TM_API_KEY
