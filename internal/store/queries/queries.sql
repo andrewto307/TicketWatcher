@@ -53,13 +53,31 @@ UPDATE users SET unsubscribed_at = NULL WHERE id = $1;
 DELETE FROM users WHERE id = $1;
 
 -- name: UpsertEventByTMID :one
-INSERT INTO events (tm_event_id, name, url, venue, event_date)
-VALUES ($1, $2, $3, $4, $5)
+-- Stores the whole snapshot, not just the display fields. Watch creation already
+-- fetches the event from Ticketmaster; discarding its availability and sale
+-- calendar meant the UI showed "we haven't checked this yet" for something we had
+-- just checked, and left last_evaluation unseeded so an already-on-sale event
+-- looked like a fresh rising edge on the first poll.
+INSERT INTO events (
+    tm_event_id, name, url, venue, event_date,
+    last_availability, public_onsale_at, public_onsale_end_at,
+    earliest_presale_at, earliest_presale_name, presale_count, onsale_tbd,
+    last_polled_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
 ON CONFLICT (tm_event_id) DO UPDATE
-    SET name       = EXCLUDED.name,
-        url        = EXCLUDED.url,
-        venue      = EXCLUDED.venue,
-        event_date = EXCLUDED.event_date
+    SET name                  = EXCLUDED.name,
+        url                   = EXCLUDED.url,
+        venue                 = EXCLUDED.venue,
+        event_date            = EXCLUDED.event_date,
+        last_availability     = EXCLUDED.last_availability,
+        public_onsale_at      = EXCLUDED.public_onsale_at,
+        public_onsale_end_at  = EXCLUDED.public_onsale_end_at,
+        earliest_presale_at   = EXCLUDED.earliest_presale_at,
+        earliest_presale_name = EXCLUDED.earliest_presale_name,
+        presale_count         = EXCLUDED.presale_count,
+        onsale_tbd            = EXCLUDED.onsale_tbd,
+        last_polled_at        = now()
 RETURNING *;
 
 -- name: GetEvent :one
@@ -158,11 +176,15 @@ SELECT * FROM watches WHERE id = $1 AND user_id = $2;
 SELECT * FROM availability_snapshots WHERE event_id = $1 ORDER BY checked_at ASC;
 
 -- name: UpdateWatch :one
--- Partial update: a NULL status keeps the current value. reset_evaluation re-arms the
--- watch so it can fire again on the next false->true edge.
+-- Partial update: a NULL status keeps the current value.
+--
+-- last_evaluation is deliberately NOT reset here. It used to be re-armed whenever
+-- the user changed a price threshold; with price watching gone (D13) the only
+-- remaining update is pause/resume, and re-arming on resume replays "on sale now"
+-- for an event that never changed. Keeping the value also means a transition the
+-- user genuinely missed while paused still fires when they resume.
 UPDATE watches
-SET status          = COALESCE(sqlc.narg('status'), status),
-    last_evaluation = CASE WHEN sqlc.arg('reset_evaluation') THEN false ELSE last_evaluation END
+SET status = COALESCE(sqlc.narg('status'), status)
 WHERE id = sqlc.arg('id') AND user_id = sqlc.arg('user_id')
 RETURNING *;
 

@@ -77,7 +77,12 @@ export function saleCopy(w: {
     case "onsale_scheduled":
       return {
         label: "Opens later",
-        headline: `The official sale opens ${publicAt}.`,
+        // Defensive: the backend only reports onsale_scheduled when it has a date,
+        // but rendering "The official sale opens ." if that ever slips would look
+        // broken to the user for no good reason.
+        headline: publicAt
+          ? `The official sale opens ${publicAt}.`
+          : "The official sale hasn't opened yet.",
         guidance:
           w.presale_count > 0
             ? `We'll email you when it opens. There ${w.presale_count === 1 ? "is" : "are"} also ${w.presale_count} presale${w.presale_count === 1 ? "" : "s"}${presaleAt ? `, starting ${presaleAt}` : ""} — we'll alert you for those too.`

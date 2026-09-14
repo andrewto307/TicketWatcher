@@ -13,13 +13,21 @@ import (
 // ResendSender sends email via the Resend API (https://resend.com). Used when
 // RESEND_API_KEY is set. The Sender interface makes it a drop-in for LogSender.
 type ResendSender struct {
-	apiKey string
-	from   string
-	http   *http.Client
+	apiKey   string
+	from     string
+	endpoint string // overridden in tests; production always uses resendEndpoint
+	http     *http.Client
 }
 
+const resendEndpoint = "https://api.resend.com/emails"
+
 func NewResendSender(apiKey, from string) *ResendSender {
-	return &ResendSender{apiKey: apiKey, from: from, http: &http.Client{Timeout: 10 * time.Second}}
+	return &ResendSender{
+		apiKey:   apiKey,
+		from:     from,
+		endpoint: resendEndpoint,
+		http:     &http.Client{Timeout: 10 * time.Second},
+	}
 }
 
 func (*ResendSender) Channel() string { return "email" }
@@ -38,7 +46,7 @@ func (r *ResendSender) Send(ctx context.Context, msg Message) error {
 		payload["headers"] = msg.Headers
 	}
 	body, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://api.resend.com/emails", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, r.endpoint, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

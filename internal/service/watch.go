@@ -130,6 +130,15 @@ func deriveSaleState(
 	return SaleStateUnknown
 }
 
+// strPtr returns nil for an empty string so the column stays NULL rather than
+// holding a meaningless "".
+func strPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
 func str(p *string) string {
 	if p == nil {
 		return ""
@@ -178,12 +187,24 @@ func (s *WatchService) Create(ctx context.Context, userID int64, in CreateWatchI
 		if ferr != nil {
 			return WatchView{}, fmt.Errorf("fetch event %q: %w", in.TMEventID, ferr)
 		}
+		// Store the whole snapshot, not just the display fields: this call already
+		// cost us a Ticketmaster request, and the sale calendar it returned is what
+		// seeds last_evaluation correctly and spares the user a "checking…" state
+		// for an event we have in fact just checked.
+		avail := snap.Availability
 		ev, err = s.q.UpsertEventByTMID(ctx, db.UpsertEventByTMIDParams{
-			TmEventID: snap.TMEventID,
-			Name:      snap.Name,
-			Url:       snap.URL,
-			Venue:     snap.Venue,
-			EventDate: store.TSPtr(snap.EventDate),
+			TmEventID:           snap.TMEventID,
+			Name:                snap.Name,
+			Url:                 snap.URL,
+			Venue:               snap.Venue,
+			EventDate:           store.TSPtr(snap.EventDate),
+			LastAvailability:    &avail,
+			PublicOnsaleAt:      store.TSPtr(snap.PublicOnsaleStart),
+			PublicOnsaleEndAt:   store.TSPtr(snap.PublicOnsaleEnd),
+			EarliestPresaleAt:   store.TSPtr(snap.EarliestPresaleStart),
+			EarliestPresaleName: strPtr(snap.EarliestPresaleName),
+			PresaleCount:        int32(snap.PresaleCount),
+			OnsaleTbd:           snap.OnsaleTBD,
 		})
 	}
 	if err != nil {
@@ -253,17 +274,19 @@ func (s *WatchService) History(ctx context.Context, userID, watchID int64) ([]Sn
 	return out, nil
 }
 
-// Update pauses or resumes a watch. Resuming re-arms it (resets last_evaluation)
-// so a condition that is already true re-establishes its edge and can fire again.
+// Update pauses or resumes a watch.
+//
+// Resuming deliberately preserves last_evaluation. Re-arming would replay "on
+// sale now" for an event whose state never changed; preserving it still lets a
+// transition the user missed while paused fire on the next poll.
 func (s *WatchService) Update(ctx context.Context, userID, watchID int64, in UpdateWatchInput) (WatchView, error) {
 	if in.Status != nil && *in.Status != "active" && *in.Status != "paused" {
 		return WatchView{}, ErrInvalidStatus
 	}
 	w, err := s.q.UpdateWatch(ctx, db.UpdateWatchParams{
-		ID:              watchID,
-		UserID:          userID,
-		Status:          in.Status,
-		ResetEvaluation: in.Status != nil && *in.Status == "active",
+		ID:     watchID,
+		UserID: userID,
+		Status: in.Status,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return WatchView{}, ErrWatchNotFound

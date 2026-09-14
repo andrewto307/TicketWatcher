@@ -4,6 +4,11 @@ package inttest
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -213,4 +218,53 @@ func containsEvent(evs []db.Event, id int64) bool {
 		}
 	}
 	return false
+}
+
+// Creating a watch on a brand-new event must store the whole snapshot, not just
+// the display fields. Three things depend on it: the UI not showing "checking…"
+// for an event we just fetched, last_evaluation seeding correctly so an
+// already-on-sale event isn't a false rising edge, and knowing the onsale date
+// so it isn't re-announced as news.
+func TestAPI_NewWatchStoresFullSnapshot(t *testing.T) {
+	srv, _ := newAuthTestServer(t, nil, 0)
+
+	email := fmt.Sprintf("snap+%d@example.com", time.Now().UnixNano())
+	res, err := http.Post(srv.URL+"/api/auth/register", "application/json",
+		strings.NewReader(fmt.Sprintf(`{"email":%q,"password":"password123"}`, email)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reg map[string]string
+	_ = json.NewDecoder(res.Body).Decode(&reg)
+	res.Body.Close()
+	token := reg["token"]
+
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/watches",
+		strings.NewReader(`{"tm_event_id":"TM999","condition_type":"becomes_available"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Body.Close()
+	if r.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(r.Body)
+		t.Fatalf("create watch: %d: %s", r.StatusCode, b)
+	}
+
+	var view map[string]any
+	_ = json.NewDecoder(r.Body).Decode(&view)
+
+	// The fake upstream reports this event as onsale, so the watch must come back
+	// already knowing that — not in the "checking" limbo.
+	if view["sale_state"] == "checking" {
+		t.Error(`sale_state = "checking" immediately after creation — the snapshot was discarded`)
+	}
+	if view["availability"] == nil {
+		t.Error("availability is null right after creation; it was fetched and thrown away")
+	}
+	if view["last_polled_at"] == nil {
+		t.Error("last_polled_at is null even though we just fetched the event")
+	}
 }

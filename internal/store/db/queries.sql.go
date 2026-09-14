@@ -831,28 +831,26 @@ func (q *Queries) UpdateUserPassword(ctx context.Context, arg UpdateUserPassword
 
 const updateWatch = `-- name: UpdateWatch :one
 UPDATE watches
-SET status          = COALESCE($1, status),
-    last_evaluation = CASE WHEN $2 THEN false ELSE last_evaluation END
-WHERE id = $3 AND user_id = $4
+SET status = COALESCE($1, status)
+WHERE id = $2 AND user_id = $3
 RETURNING id, user_id, event_id, condition_type, status, last_evaluation, last_notified_at, poll_interval_s, created_at
 `
 
 type UpdateWatchParams struct {
-	Status          *string `json:"status"`
-	ResetEvaluation bool    `json:"reset_evaluation"`
-	ID              int64   `json:"id"`
-	UserID          int64   `json:"user_id"`
+	Status *string `json:"status"`
+	ID     int64   `json:"id"`
+	UserID int64   `json:"user_id"`
 }
 
-// Partial update: a NULL status keeps the current value. reset_evaluation re-arms the
-// watch so it can fire again on the next false->true edge.
+// Partial update: a NULL status keeps the current value.
+//
+// last_evaluation is deliberately NOT reset here. It used to be re-armed whenever
+// the user changed a price threshold; with price watching gone (D13) the only
+// remaining update is pause/resume, and re-arming on resume replays "on sale now"
+// for an event that never changed. Keeping the value also means a transition the
+// user genuinely missed while paused still fires when they resume.
 func (q *Queries) UpdateWatch(ctx context.Context, arg UpdateWatchParams) (Watch, error) {
-	row := q.db.QueryRow(ctx, updateWatch,
-		arg.Status,
-		arg.ResetEvaluation,
-		arg.ID,
-		arg.UserID,
-	)
+	row := q.db.QueryRow(ctx, updateWatch, arg.Status, arg.ID, arg.UserID)
 	var i Watch
 	err := row.Scan(
 		&i.ID,
@@ -869,24 +867,49 @@ func (q *Queries) UpdateWatch(ctx context.Context, arg UpdateWatchParams) (Watch
 }
 
 const upsertEventByTMID = `-- name: UpsertEventByTMID :one
-INSERT INTO events (tm_event_id, name, url, venue, event_date)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO events (
+    tm_event_id, name, url, venue, event_date,
+    last_availability, public_onsale_at, public_onsale_end_at,
+    earliest_presale_at, earliest_presale_name, presale_count, onsale_tbd,
+    last_polled_at
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
 ON CONFLICT (tm_event_id) DO UPDATE
-    SET name       = EXCLUDED.name,
-        url        = EXCLUDED.url,
-        venue      = EXCLUDED.venue,
-        event_date = EXCLUDED.event_date
+    SET name                  = EXCLUDED.name,
+        url                   = EXCLUDED.url,
+        venue                 = EXCLUDED.venue,
+        event_date            = EXCLUDED.event_date,
+        last_availability     = EXCLUDED.last_availability,
+        public_onsale_at      = EXCLUDED.public_onsale_at,
+        public_onsale_end_at  = EXCLUDED.public_onsale_end_at,
+        earliest_presale_at   = EXCLUDED.earliest_presale_at,
+        earliest_presale_name = EXCLUDED.earliest_presale_name,
+        presale_count         = EXCLUDED.presale_count,
+        onsale_tbd            = EXCLUDED.onsale_tbd,
+        last_polled_at        = now()
 RETURNING id, tm_event_id, name, url, venue, event_date, last_availability, last_polled_at, next_poll_at, created_at, public_onsale_at, public_onsale_end_at, earliest_presale_at, earliest_presale_name, presale_count, onsale_tbd
 `
 
 type UpsertEventByTMIDParams struct {
-	TmEventID string             `json:"tm_event_id"`
-	Name      string             `json:"name"`
-	Url       string             `json:"url"`
-	Venue     string             `json:"venue"`
-	EventDate pgtype.Timestamptz `json:"event_date"`
+	TmEventID           string             `json:"tm_event_id"`
+	Name                string             `json:"name"`
+	Url                 string             `json:"url"`
+	Venue               string             `json:"venue"`
+	EventDate           pgtype.Timestamptz `json:"event_date"`
+	LastAvailability    *string            `json:"last_availability"`
+	PublicOnsaleAt      pgtype.Timestamptz `json:"public_onsale_at"`
+	PublicOnsaleEndAt   pgtype.Timestamptz `json:"public_onsale_end_at"`
+	EarliestPresaleAt   pgtype.Timestamptz `json:"earliest_presale_at"`
+	EarliestPresaleName *string            `json:"earliest_presale_name"`
+	PresaleCount        int32              `json:"presale_count"`
+	OnsaleTbd           bool               `json:"onsale_tbd"`
 }
 
+// Stores the whole snapshot, not just the display fields. Watch creation already
+// fetches the event from Ticketmaster; discarding its availability and sale
+// calendar meant the UI showed "we haven't checked this yet" for something we had
+// just checked, and left last_evaluation unseeded so an already-on-sale event
+// looked like a fresh rising edge on the first poll.
 func (q *Queries) UpsertEventByTMID(ctx context.Context, arg UpsertEventByTMIDParams) (Event, error) {
 	row := q.db.QueryRow(ctx, upsertEventByTMID,
 		arg.TmEventID,
@@ -894,6 +917,13 @@ func (q *Queries) UpsertEventByTMID(ctx context.Context, arg UpsertEventByTMIDPa
 		arg.Url,
 		arg.Venue,
 		arg.EventDate,
+		arg.LastAvailability,
+		arg.PublicOnsaleAt,
+		arg.PublicOnsaleEndAt,
+		arg.EarliestPresaleAt,
+		arg.EarliestPresaleName,
+		arg.PresaleCount,
+		arg.OnsaleTbd,
 	)
 	var i Event
 	err := row.Scan(
