@@ -68,15 +68,16 @@ and applied on boot). Auth is JWT + bcrypt.
 **Frontend** — React 18 + TypeScript, built with Vite. No router and no state
 library; the app is small enough not to need either.
 
-**Database** — PostgreSQL 16.
+**Database** — PostgreSQL. Local dev runs 16 via Docker; production runs Fly's
+Postgres Flex.
 
 **Email** — [Resend](https://resend.com), on a DKIM/SPF-verified subdomain. With
 no API key configured the app falls back to a log-only sender, so the whole
 pipeline is demoable without an email account.
 
 **Hosting** — [Fly.io](https://fly.io), single `shared-cpu-1x` machine in `ewr`,
-with Postgres running alongside it. Deploys run from GitHub Actions on every push
-to `main`.
+with a Postgres Flex instance in the same region. Deploys run from GitHub Actions
+on every push to `main`.
 
 **Packaging** — a multi-stage Dockerfile builds the SPA, embeds it into the Go
 binary with `//go:embed`, and ships the result on `distroless/static`. One binary
