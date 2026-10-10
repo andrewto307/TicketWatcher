@@ -259,3 +259,34 @@ describe("WatchCard — status history", () => {
     expect(screen.getByText("Test Show")).toBeInTheDocument();
   });
 });
+
+describe("WatchCard — sale state on the card edge", () => {
+  const edge = (el: HTMLElement) => el.closest('[class*="border-l-4"]')?.className ?? "";
+
+  it("marks an on-sale event with the good tone", () => {
+    render(<WatchCard watch={watch({ sale_state: "on_sale" })} onChanged={vi.fn()} />);
+
+    expect(edge(screen.getByText("Test Show"))).toContain("border-l-good");
+  });
+
+  it("marks a closed sale with the warning tone", () => {
+    render(<WatchCard watch={watch({ sale_state: "sale_closed" })} onChanged={vi.fn()} />);
+
+    expect(edge(screen.getByText("Test Show"))).toContain("border-l-warn");
+  });
+
+  it("leaves a scheduled sale neutral", () => {
+    render(<WatchCard watch={watch({ sale_state: "onsale_scheduled" })} onChanged={vi.fn()} />);
+
+    expect(edge(screen.getByText("Test Show"))).toContain("border-l-line-strong");
+  });
+
+  it("never carries state by colour alone", () => {
+    render(<WatchCard watch={watch({ sale_state: "on_sale" })} onChanged={vi.fn()} />);
+
+    // The edge is a second encoding; the badge and the message still say it,
+    // so the card works for anyone who cannot distinguish the colours.
+    expect(screen.getByText("On sale")).toBeInTheDocument();
+    expect(screen.getByText(/on sale to the general public/i)).toBeInTheDocument();
+  });
+});

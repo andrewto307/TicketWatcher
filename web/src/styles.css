@@ -36,13 +36,13 @@
 /* Written by src/theme.ts (and the pre-paint script in index.html) from the
  user's choice, defaulting to their OS setting. */
 :root[data-theme="dark"] {
-  --c-canvas: oklch(17% 0.012 265);
-  --c-surface: oklch(21% 0.014 265);
-  --c-surface-2: oklch(25% 0.015 265);
-  --c-border: oklch(30% 0.015 265);
-  --c-border-strong: oklch(38% 0.018 265);
-  --c-text: oklch(96% 0.004 265);
-  --c-muted: oklch(70% 0.014 265);
+  --c-canvas: oklch(15.5% 0.018 265);
+  --c-surface: oklch(21.5% 0.024 265);
+  --c-surface-2: oklch(26% 0.026 265);
+  --c-border: oklch(31% 0.024 265);
+  --c-border-strong: oklch(41% 0.028 265);
+  --c-text: oklch(96% 0.006 265);
+  --c-muted: oklch(71% 0.018 265);
   --c-accent: oklch(66% 0.17 262);
   --c-accent-hover: oklch(72% 0.17 262);
   --c-accent-fg: oklch(16% 0.02 262);
@@ -163,4 +163,88 @@
 
 @utility animate-bob {
   animation: tw-bob 1.8s ease-in-out infinite;
+}
+
+/* ---------------------------------------------------------------------------
+   Decoration.
+
+   Every layer below is behind the content and pointer-events:none. A full-page
+   overlay that swallows clicks is the same class of bug that cost us scroll
+   snapping, so it is a rule here, not an afterthought.
+--------------------------------------------------------------------------- */
+
+/* Film grain. Imperceptible on its own; it stops large gradients banding and
+   makes flat colour read as a surface rather than a void. */
+@utility grain {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+:root[data-theme="dark"] .grain {
+  opacity: 0.05;
+}
+
+/* A single wide radial in the accent colour, bleeding down from behind the
+   headline. Does more work in dark mode than light. */
+@utility hero-glow {
+  position: absolute;
+  inset-inline: 0;
+  top: -12rem;
+  height: 44rem;
+  pointer-events: none;
+  background: radial-gradient(
+    60% 50% at 50% 30%,
+    color-mix(in oklch, var(--c-accent) 22%, transparent) 0%,
+    transparent 70%
+  );
+}
+
+:root[data-theme="dark"] .hero-glow {
+  background: radial-gradient(
+    60% 50% at 50% 30%,
+    color-mix(in oklch, var(--c-accent) 30%, transparent) 0%,
+    transparent 70%
+  );
+}
+
+/* Texture with nothing to actually look at: a faint grid, faded out at the
+   edges so it never reads as a boundary. */
+@utility hero-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, var(--c-border) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--c-border) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.5;
+  mask-image: radial-gradient(60% 55% at 50% 40%, black 0%, transparent 75%);
+  -webkit-mask-image: radial-gradient(60% 55% at 50% 40%, black 0%, transparent 75%);
+}
+
+/* Lights the screenshot from beneath with a tinted bloom, instead of the
+   neutral drop shadow that makes an image look pasted on. */
+@utility shot-lit {
+  position: relative;
+}
+
+.shot-lit::after {
+  content: "";
+  position: absolute;
+  inset: 12% 8% -8% 8%;
+  z-index: -1;
+  pointer-events: none;
+  border-radius: 999px;
+  filter: blur(42px);
+  background: color-mix(in oklch, var(--c-accent) 26%, transparent);
+  opacity: 0.5;
+}
+
+:root[data-theme="dark"] .shot-lit::after {
+  opacity: 0.4;
+  filter: blur(56px);
 }

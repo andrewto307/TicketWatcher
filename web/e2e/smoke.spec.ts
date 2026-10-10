@@ -338,16 +338,33 @@ test.describe("theme", () => {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   });
 
-  test("signed-in users can change it from the profile menu", async ({ page }) => {
+  test("the control sits in the header whether signed in or out", async ({ page }) => {
+    // Logged out it is in the header; burying it in a dropdown once you sign in
+    // moves it exactly when it gets used most.
+    await page.goto("/");
+    await expect(page.getByRole("banner").getByRole("radio", { name: "Dark" })).toBeVisible();
+
     await mockApi(page);
     await signIn(page);
+    await page.goto("/watches");
 
-    await page.getByRole("button", { name: /account|@example\.test/i }).first().click();
-    await page.getByRole("radio", { name: "Dark" }).click();
-
+    const inHeader = page.getByRole("banner").getByRole("radio", { name: "Dark" });
+    await expect(inHeader).toBeVisible();
+    await inHeader.click();
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-    // Choosing a theme must not dismiss the menu mid-decision.
-    await expect(page.getByRole("menu")).toBeVisible();
+  });
+
+  test("the signed-in header fits a phone", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await mockApi(page);
+    await signIn(page);
+    await page.goto("/watches");
+
+    await expect(page.getByRole("banner").getByRole("radio", { name: "Light" })).toBeVisible();
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(1);
   });
 });
 
@@ -537,5 +554,153 @@ test.describe("scroll affordance", () => {
     expect(
       await page.evaluate(() => getComputedStyle(document.documentElement).scrollSnapType),
     ).toBe("none");
+  });
+});
+
+test.describe("decoration", () => {
+  test("never swallows a click", async ({ page }) => {
+    await page.goto("/");
+
+    // The glow, grid and grain all cover content. A full-page overlay that
+    // intercepts pointer events is the bug class that cost us scroll snapping.
+    for (const sel of [".grain", ".hero-glow", ".hero-grid"]) {
+      const el = page.locator(sel);
+      await expect(el).toHaveCount(1);
+      await expect(el).toHaveCSS("pointer-events", "none");
+    }
+
+    await page.getByRole("banner").getByRole("button", { name: "Log in" }).click();
+    await expect(page.getByRole("dialog")).toBeVisible();
+  });
+
+  test("decorative layers are hidden from assistive tech", async ({ page }) => {
+    await page.goto("/");
+
+    for (const sel of [".grain", ".hero-glow", ".hero-grid"]) {
+      await expect(page.locator(sel)).toHaveAttribute("aria-hidden", "true");
+    }
+  });
+
+  test("screenshots sit in browser chrome", async ({ page }) => {
+    await page.goto("/");
+    const section = page.getByRole("region", { name: "Watch" });
+    await section.scrollIntoViewIfNeeded();
+
+    // The chrome is decoration; the screenshot inside carries the alt text.
+    await expect(section.getByText("ticketwatcher.fly.dev/watches")).toBeVisible();
+    await expect(section.getByRole("img")).toHaveCount(1);
+  });
+
+  test("alternating section bands span the full viewport width", async ({ page }) => {
+    await page.goto("/");
+
+    // Constrained to the page container the band reads as a floating panel,
+    // not a band — so it must be full-bleed.
+    const { bandW, vw } = await page.evaluate(() => {
+      const s = document.querySelector('section[aria-label="Watch"]')!;
+      const before = getComputedStyle(s, "::before");
+      return { bandW: parseFloat(before.width), vw: window.innerWidth };
+    });
+    expect(Math.abs(bandW - vw)).toBeLessThanOrEqual(2);
+  });
+
+  test("decoration adds no sideways scroll", async ({ page }) => {
+    for (const w of [1280, 390]) {
+      await page.setViewportSize({ width: w, height: 800 });
+      await page.goto("/");
+      await page.evaluate(() => window.scrollTo({ top: 1200, behavior: "instant" }));
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow, `overflow at ${w}px`).toBeLessThanOrEqual(1);
+    }
+  });
+});
+
+test.describe("hero composition", () => {
+  test("every heading shares one typeface and weight", async ({ page }) => {
+    await page.goto("/");
+
+    const h1 = await page
+      .getByRole("heading", { level: 1 })
+      .evaluate((e) => ({ family: getComputedStyle(e).fontFamily, weight: getComputedStyle(e).fontWeight }));
+    const h2 = await page
+      .getByRole("heading", { name: /easy to search/i })
+      .evaluate((e) => ({ family: getComputedStyle(e).fontFamily, weight: getComputedStyle(e).fontWeight }));
+
+    // A display face on the hero alone gave the page two voices; the hero is
+    // distinguished by size, not by family.
+    expect(h1.family).toContain("Inter");
+    expect(h1.family).toBe(h2.family);
+    expect(h1.weight).toBe(h2.weight);
+  });
+
+  test("the hero still fits one screen at every width", async ({ page }) => {
+    for (const vp of [
+      { width: 1280, height: 900 },
+      { width: 1440, height: 600 },
+      { width: 390, height: 844 },
+    ]) {
+      await page.setViewportSize(vp);
+      await page.goto("/");
+      const h = await page
+        .locator("main > section")
+        .first()
+        .evaluate((e) => Math.round(e.getBoundingClientRect().height));
+      // Decoration must not push the hero past the fold it was sized for.
+      expect(h, `hero at ${vp.width}x${vp.height}`).toBeLessThanOrEqual(vp.height);
+    }
+  });
+
+  test("the hero card cluster is decorative and desktop-only", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto("/");
+    const cluster = page.locator('[aria-hidden="true"]').filter({ hasText: "Aurora Nights Festival" });
+    await expect(cluster).toBeVisible();
+
+    // On one column it would push the hero past one screen, and it is
+    // decoration, so it goes rather than the layout rule.
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(cluster).toBeHidden();
+  });
+
+  test("screenshots straighten out of a tilt as they arrive", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await page.goto("/");
+
+    const shot = page.locator(".shot-lit").first();
+    // The hidden state is applied in an effect, so read after it has run.
+    await page.waitForTimeout(400);
+    const before = await shot.evaluate((e) => getComputedStyle(e).transform);
+    // A 3D rotation produces a matrix3d; flat content would be matrix() or none.
+    expect(before).toContain("matrix3d");
+
+    await page.getByRole("region", { name: "Search" }).scrollIntoViewIfNeeded();
+    await page.waitForTimeout(1200);
+    expect(await shot.evaluate((e) => getComputedStyle(e).transform)).toBe("none");
+  });
+});
+
+test.describe("dark mode depth", () => {
+  test("surfaces lift off the canvas", async ({ page }) => {
+    await page.emulateMedia({ colorScheme: "dark" });
+    await mockApi(page, { events: [stubEvent()] });
+    await signIn(page);
+    await search(page);
+    await page.getByRole("button", { name: "Watch", exact: true }).click();
+    await page.goto("/watches");
+
+    const { canvas, surface } = await page.evaluate(() => {
+      const cs = getComputedStyle(document.documentElement);
+      return {
+        canvas: cs.getPropertyValue("--c-canvas").trim(),
+        surface: cs.getPropertyValue("--c-surface").trim(),
+      };
+    });
+
+    // A card that sits within a couple of percent of the page behind it reads
+    // as flat; the gap is what gives dark mode its depth.
+    const lightness = (v: string) => parseFloat(v.match(/oklch\(([\d.]+)%/)?.[1] ?? "0");
+    expect(lightness(surface) - lightness(canvas)).toBeGreaterThanOrEqual(4);
   });
 });

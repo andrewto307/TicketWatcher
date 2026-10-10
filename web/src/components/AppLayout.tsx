@@ -18,10 +18,15 @@ export function AppLayout({ onLogout }: { onLogout: () => void }) {
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-4 px-4">
           {/* The wordmark is how you get back to search from anywhere. */}
           <Link to="/" aria-label="TicketWatcher home" className="rounded-lg">
-            <Wordmark />
+            <Wordmark collapsible />
           </Link>
 
-          <Menu
+          <div className="flex items-center gap-3">
+            <div className="w-24 shrink-0 sm:w-28">
+              <ThemeToggle />
+            </div>
+
+            <Menu
             label={
               <>
                 <span className="hidden max-w-[12rem] truncate sm:inline">{me?.email ?? "Account"}</span>
@@ -45,17 +50,12 @@ export function AppLayout({ onLogout }: { onLogout: () => void }) {
               Settings
             </NavLink>
             <div className="my-1 h-px bg-line" />
-            {/* Clicking inside must not close the menu mid-choice. */}
-            <div className="px-2.5 py-2" onClick={(e) => e.stopPropagation()}>
-              <p className="mb-1.5 text-xs text-muted">Theme</p>
-              <ThemeToggle />
-            </div>
-            <div className="my-1 h-px bg-line" />
             <button type="button" role="menuitem" onClick={onLogout} className={`${item} w-full`}>
               <LogOut aria-hidden className="size-4 text-muted" />
               Log out
             </button>
-          </Menu>
+            </Menu>
+          </div>
         </div>
       </header>
 

@@ -16,6 +16,14 @@ const boxTone = {
   muted: "border-line bg-surface-2",
 } as const;
 
+// A second encoding of the state already given by the badge and the message,
+// so ten cards can be scanned at a glance. Never the only signal.
+const edgeTone = {
+  good: "border-l-good",
+  warn: "border-l-warn",
+  muted: "border-l-line-strong",
+} as const;
+
 export function WatchCard({
   watch,
   alerts = [],
@@ -86,7 +94,7 @@ export function WatchCard({
   const latest = alerts[0];
 
   return (
-    <Card className="animate-fade-up flex flex-col gap-3 p-4">
+    <Card className={`animate-fade-up flex flex-col gap-3 border-l-4 p-4 ${edgeTone[copy.tone]}`}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="font-semibold text-ink">{watch.event_name}</h3>

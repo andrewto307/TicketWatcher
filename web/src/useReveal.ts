@@ -11,7 +11,11 @@ import { useEffect, useRef, useState } from "react";
  * Fires once: re-animating on the way back up draws attention to the mechanism
  * rather than the content.
  */
-export function useReveal<T extends HTMLElement = HTMLDivElement>(delayMs = 0) {
+export function useReveal<T extends HTMLElement = HTMLDivElement>(
+  delayMs = 0,
+  /** Degrees of Y-axis tilt to straighten out of. One axis, kept small. */
+  tiltDeg = 0,
+) {
   const ref = useRef<T>(null);
   const [shown, setShown] = useState(true);
   const [armed, setArmed] = useState(false);
@@ -41,12 +45,16 @@ export function useReveal<T extends HTMLElement = HTMLDivElement>(delayMs = 0) {
     return () => io.disconnect();
   }, []);
 
+  const hidden = tiltDeg
+    ? `translateY(20px) rotateY(${tiltDeg}deg) scale(0.97)`
+    : "translateY(20px)";
+
   const style = armed
     ? ({
         opacity: shown ? 1 : 0,
-        transform: shown ? "none" : "translateY(20px)",
+        transform: shown ? "none" : hidden,
         transition: `opacity 500ms cubic-bezier(0.22, 1, 0.36, 1) ${delayMs}ms,
-                     transform 500ms cubic-bezier(0.22, 1, 0.36, 1) ${delayMs}ms`,
+                     transform 650ms cubic-bezier(0.22, 1, 0.36, 1) ${delayMs}ms`,
       } as const)
     : undefined;
 

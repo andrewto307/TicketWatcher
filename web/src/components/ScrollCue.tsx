@@ -22,7 +22,7 @@ export function ScrollCue() {
   return (
     <div
       aria-hidden
-      className={`pointer-events-none mt-12 flex justify-center transition-opacity duration-300 ${
+      className={`pointer-events-none mt-8 flex justify-center transition-opacity duration-300 ${
         past ? "opacity-0" : "opacity-100"
       }`}
     >

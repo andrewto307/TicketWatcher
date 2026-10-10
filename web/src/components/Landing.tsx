@@ -9,6 +9,8 @@ import { LoginDialog } from "./LoginDialog";
 import { Button } from "../ui/Button";
 import { ThemeToggle } from "./ThemeToggle";
 import { ScrollCue } from "./ScrollCue";
+import { BrowserFrame } from "./BrowserFrame";
+import { HeroCards } from "./HeroCards";
 
 // The logged-out root. Its job is to say what the service does before asking
 // anyone to sign up, which the old bare login box did not.
@@ -22,6 +24,7 @@ const features = [
     eyebrow: "Search",
     title: "Easy to search for your favourite events",
     body: "One search across Ticketmaster — artists, teams, shows. Filter out anything that has already gone on sale, so you only see what is still worth watching.",
+    frameLabel: "ticketwatcher.fly.dev",
     src: eventSearchShot,
     alt: "Search results listing events with their on-sale status, each with Watch and Save buttons",
   },
@@ -30,6 +33,7 @@ const features = [
     eyebrow: "Watch",
     title: "Start watching its status, and that's it",
     body: "No refreshing, no calendar reminders. We check each event around the clock and keep its sale status up to date for you.",
+    frameLabel: "ticketwatcher.fly.dev/watches",
     src: watchListShot,
     alt: "Watch list showing each tracked event and when its sale opens",
   },
@@ -38,6 +42,7 @@ const features = [
     eyebrow: "Get alerted",
     title: "An email the moment it goes on sale",
     body: "Presales included, along with date announcements, cancellations and reschedules. Become an early bird today.",
+    frameLabel: "mail.google.com",
     src: emailSentShot,
     alt: "An alert email announcing that a presale has opened",
   },
@@ -46,7 +51,7 @@ const features = [
 // Each landing section owns a full screen, so scrolling moves between whole
 // ideas rather than through a continuous column. min-h rather than h: a short
 // viewport or long text grows the section instead of clipping it.
-const screen = "flex min-h-[calc(100dvh-3.5rem)] flex-col justify-center py-16";
+const screen = "flex min-h-[calc(100dvh-3.5rem)] flex-col justify-center py-10 sm:py-16";
 
 /**
  * Wraps one block so it fades and rises when scrolled to. Staggering siblings
@@ -80,10 +85,15 @@ function Feature({
   flip: boolean;
 }) {
   const text = useReveal<HTMLDivElement>();
-  const shot = useReveal<HTMLDivElement>(80);
+  const shot = useReveal<HTMLDivElement>(80, flip ? 6 : -6);
 
   return (
-    <section aria-label={f.eyebrow} className={`${screen} border-t border-line`}>
+    <section
+      aria-label={f.eyebrow}
+      className={`${screen} relative
+        before:absolute before:inset-y-0 before:left-1/2 before:-z-10 before:w-screen
+        before:-translate-x-1/2 ${flip ? "before:bg-surface-2" : "before:border-t before:border-line"}`}
+    >
       <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-16">
         <div ref={text.ref} style={text.style} className={flip ? "lg:order-2" : undefined}>
           <span className="inline-flex items-center gap-2 text-sm font-medium text-accent">
@@ -96,16 +106,22 @@ function Feature({
           <p className="mt-4 max-w-md text-lg text-muted">{f.body}</p>
         </div>
 
-        <div ref={shot.ref} style={shot.style} className={flip ? "lg:order-1" : undefined}>
-          <img
-            src={f.src}
-            alt={f.alt}
-            width={760}
-            height={475}
-            loading="lazy"
-            decoding="async"
-            className="aspect-[16/10] w-full rounded-xl border border-line object-cover shadow-lg"
-          />
+        {/* perspective on the wrapper, transform on the child: the tilt needs a
+            3D context to read as depth rather than a squash. */}
+        <div className={`[perspective:1400px] ${flip ? "lg:order-1" : ""}`}>
+          <div ref={shot.ref} style={shot.style} className="shot-lit">
+          <BrowserFrame label={f.frameLabel}>
+            <img
+              src={f.src}
+              alt={f.alt}
+              width={760}
+              height={475}
+              loading="lazy"
+              decoding="async"
+              className="aspect-[16/10] w-full object-cover"
+            />
+          </BrowserFrame>
+          </div>
         </div>
       </div>
     </section>
@@ -122,8 +138,9 @@ export function Landing({ onAuthed }: { onAuthed: () => void }) {
   }
 
   return (
-    <div className="min-h-dvh bg-canvas">
-      <header className="border-b border-line">
+    <div className="relative min-h-dvh overflow-x-clip bg-canvas">
+      <div aria-hidden className="grain" />
+      <header className="relative z-10 border-b border-line">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
           <Wordmark />
           <div className="flex items-center gap-3">
@@ -138,16 +155,21 @@ export function Landing({ onAuthed }: { onAuthed: () => void }) {
       </header>
 
       <main className="mx-auto max-w-5xl px-4">
-        {/* The message and the two buttons are the whole first impression. */}
-        <section className={`${screen} text-center`}>
-          <h1 className="mx-auto max-w-3xl text-4xl font-semibold tracking-tight text-balance text-ink sm:text-5xl">
+        {/* The message and the two buttons are the whole first impression.
+            Text left, product right: centred everything is safe but inert. */}
+        <section className={`${screen} relative`}>
+          <div aria-hidden className="hero-grid" />
+          <div aria-hidden className="hero-glow" />
+          <div className="relative grid items-center gap-12 text-center lg:grid-cols-[1.1fr_1fr] lg:gap-16 lg:text-left">
+          <div>
+          <h1 className="max-w-3xl text-4xl font-semibold tracking-tight text-balance text-ink sm:text-5xl">
             Want to get notified when your favourite events go on sale?
           </h1>
-          <p className="mx-auto mt-5 max-w-xl text-lg text-muted">
+          <p className="mt-6 max-w-xl text-lg text-muted lg:mx-0">
             TicketWatcher follows the events you care about and emails you the moment tickets become
             available — presales included.
           </p>
-          <div className="mt-8 flex flex-wrap justify-center gap-3">
+          <div className="mt-8 flex flex-wrap justify-center gap-3 lg:justify-start">
             <Button variant="primary" size="lg" onClick={() => openAs("register")}>
               Get started
             </Button>
@@ -155,10 +177,16 @@ export function Landing({ onAuthed }: { onAuthed: () => void }) {
               Log in
             </Button>
           </div>
-          <p className="mt-4 flex items-center justify-center gap-1.5 text-sm text-muted">
+          <p className="mt-4 flex items-center justify-center gap-1.5 text-sm text-muted lg:justify-start">
             <ShieldCheck aria-hidden className="size-4" />
             No tracking, no ads. Just an email address.
           </p>
+          </div>
+
+          <div className="mx-auto hidden w-full max-w-sm lg:block lg:max-w-none">
+            <HeroCards />
+          </div>
+          </div>
           <ScrollCue />
         </section>
 
