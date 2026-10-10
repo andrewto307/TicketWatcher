@@ -1,8 +1,11 @@
 import { useState } from "react";
+import { MailWarning } from "lucide-react";
 import { api } from "../api";
+import { Button } from "../ui/Button";
 
 // Alerts are withheld from unconfirmed addresses (the backend skips them), so an
-// unverified user needs to know why their watches would stay silent.
+// unverified user needs to know why their watches would stay silent. Shown on
+// every logged-in page, because the consequence applies everywhere.
 export function VerifyBanner({ email }: { email: string }) {
   const [sent, setSent] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -22,19 +25,21 @@ export function VerifyBanner({ email }: { email: string }) {
   }
 
   return (
-    <div className="notice">
-      <span>
-        <strong>Confirm your email.</strong> We sent a link to <code>{email}</code>. Until you
-        confirm it, your watches keep tracking these events but alerts won't be emailed.
+    <div className="flex flex-wrap items-center gap-3 rounded-lg border border-warn-border bg-warn-soft px-4 py-3">
+      <MailWarning aria-hidden className="size-4 shrink-0 text-warn" />
+      <span className="min-w-0 flex-1 text-sm text-ink">
+        <strong className="font-semibold">Confirm your email.</strong> We sent a link to{" "}
+        <code>{email}</code>. Until you confirm it, your watches keep tracking these events but
+        alerts won't be emailed.
       </span>
       {sent ? (
-        <span className="muted">Sent — check your inbox.</span>
+        <span className="text-sm text-muted">Sent — check your inbox.</span>
       ) : (
-        <button type="button" onClick={resend} disabled={busy}>
+        <Button type="button" onClick={resend} disabled={busy}>
           {busy ? "…" : "Resend email"}
-        </button>
+        </Button>
       )}
-      {err && <span className="muted">{err}</span>}
+      {err && <span className="text-sm text-muted">{err}</span>}
     </div>
   );
 }

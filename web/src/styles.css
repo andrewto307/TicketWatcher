@@ -1,211 +1,151 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   Design tokens.
+
+   Colours are defined once as semantic CSS variables and flipped wholesale for
+   dark mode, then exposed to Tailwind through @theme. That means a utility like
+   `bg-surface` is correct in both themes with no `dark:` prefix at the call
+   site, and there is exactly one place to change a colour.
+--------------------------------------------------------------------------- */
+
 :root {
-  --bg: #f6f7f9;
-  --panel: #ffffff;
-  --text: #1a1d21;
-  --muted: #6b7280;
-  --border: #e5e7eb;
-  --accent: #2563eb;
-  --accent-fg: #ffffff;
-  --danger: #dc2626;
-  --ok: #16a34a;
-  --warn: #d97706;
-  --shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --c-canvas: oklch(98.4% 0.002 265);
+  --c-surface: oklch(100% 0 0);
+  --c-surface-2: oklch(96.8% 0.003 265);
+  --c-border: oklch(91% 0.005 265);
+  --c-border-strong: oklch(84% 0.008 265);
+  --c-text: oklch(21% 0.012 265);
+  --c-muted: oklch(50% 0.014 265);
+  --c-accent: oklch(54% 0.21 262);
+  --c-accent-hover: oklch(48% 0.21 262);
+  --c-accent-fg: oklch(100% 0 0);
+  --c-accent-soft: oklch(95.5% 0.025 262);
+
+  /* Sale-state semantics. Reserved for status only, never decoration. */
+  --c-good: oklch(52% 0.13 155);
+  --c-good-soft: oklch(96% 0.035 155);
+  --c-good-border: oklch(86% 0.06 155);
+  --c-warn: oklch(55% 0.14 65);
+  --c-warn-soft: oklch(96.5% 0.04 75);
+  --c-warn-border: oklch(87% 0.07 75);
+  --c-danger: oklch(55% 0.2 25);
+  --c-danger-soft: oklch(96.5% 0.03 25);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0f1216;
-    --panel: #171b21;
-    --text: #e6e8eb;
-    --muted: #9aa4b2;
-    --border: #262c34;
-    --accent: #3b82f6;
-    --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+/* Written by src/theme.ts (and the pre-paint script in index.html) from the
+ user's choice, defaulting to their OS setting. */
+:root[data-theme="dark"] {
+  --c-canvas: oklch(17% 0.012 265);
+  --c-surface: oklch(21% 0.014 265);
+  --c-surface-2: oklch(25% 0.015 265);
+  --c-border: oklch(30% 0.015 265);
+  --c-border-strong: oklch(38% 0.018 265);
+  --c-text: oklch(96% 0.004 265);
+  --c-muted: oklch(70% 0.014 265);
+  --c-accent: oklch(66% 0.17 262);
+  --c-accent-hover: oklch(72% 0.17 262);
+  --c-accent-fg: oklch(16% 0.02 262);
+  --c-accent-soft: oklch(29% 0.06 262);
+
+  --c-good: oklch(76% 0.15 155);
+  --c-good-soft: oklch(27% 0.05 155);
+  --c-good-border: oklch(38% 0.07 155);
+  --c-warn: oklch(80% 0.13 75);
+  --c-warn-soft: oklch(28% 0.05 75);
+  --c-warn-border: oklch(40% 0.07 75);
+  --c-danger: oklch(70% 0.17 25);
+  --c-danger-soft: oklch(28% 0.07 25);
+}
+
+@theme inline {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --color-canvas: var(--c-canvas);
+  --color-surface: var(--c-surface);
+  --color-surface-2: var(--c-surface-2);
+  --color-line: var(--c-border);
+  --color-line-strong: var(--c-border-strong);
+  --color-ink: var(--c-text);
+  --color-muted: var(--c-muted);
+
+  --color-accent: var(--c-accent);
+  --color-accent-hover: var(--c-accent-hover);
+  --color-accent-fg: var(--c-accent-fg);
+  --color-accent-soft: var(--c-accent-soft);
+
+  --color-good: var(--c-good);
+  --color-good-soft: var(--c-good-soft);
+  --color-good-border: var(--c-good-border);
+  --color-warn: var(--c-warn);
+  --color-warn-soft: var(--c-warn-soft);
+  --color-warn-border: var(--c-warn-border);
+  --color-danger: var(--c-danger);
+  --color-danger-soft: var(--c-danger-soft);
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--c-canvas);
+    color: var(--c-text);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv05" 1, "ss01" 1;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* One visible focus treatment everywhere, rather than per-component. */
+  :focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+
+  code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.9em;
   }
 }
 
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  line-height: 1.5;
+/* Motion is opt-out, not opt-in: anything that animates is covered by this. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
-.app { max-width: 860px; margin: 0 auto; padding: 24px 20px 64px; }
-
-.app-header h1 { margin: 0 0 4px; font-size: 1.7rem; }
-.tagline { margin: 0; color: var(--muted); }
-
-section { margin-top: 32px; }
-section h2 { font-size: 1.1rem; margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
-.count {
-  font-size: 0.78rem; font-weight: 600; color: var(--muted);
-  background: var(--border); border-radius: 999px; padding: 1px 9px;
+@keyframes tw-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
-.muted { color: var(--muted); }
-.error {
-  background: color-mix(in srgb, var(--danger) 12%, transparent);
-  color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
-  padding: 10px 12px; border-radius: 8px; margin: 12px 0; font-size: 0.9rem;
+@keyframes tw-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
-/* Informational, not an error: verification prompts and reset confirmations. */
-.notice {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
-  padding: 10px 12px; border-radius: 8px; margin: 12px 0; font-size: 0.9rem;
-  text-align: left;
+@utility animate-fade-up {
+  animation: tw-fade-up 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
-.notice span { flex: 1 1 220px; }
-.notice code { font-size: 0.85em; }
 
-/* Amber variant: not an error, but the user should know something won't work. */
-.notice.warn {
-  background: color-mix(in srgb, #d9a13b 12%, transparent);
-  border-color: color-mix(in srgb, #d9a13b 35%, transparent);
+@utility animate-fade-in {
+  animation: tw-fade-in 160ms ease-out both;
 }
-.warn-text { color: #d9a13b; font-size: 0.82rem; }
-
-button {
-  font: inherit; cursor: pointer; border: 1px solid var(--border);
-  background: var(--panel); color: var(--text);
-  padding: 6px 12px; border-radius: 8px; transition: background 0.12s, border-color 0.12s;
-}
-button:hover:not(:disabled) { border-color: var(--accent); }
-button:disabled { opacity: 0.5; cursor: not-allowed; }
-button.danger { color: var(--danger); }
-button.danger:hover { border-color: var(--danger); }
-button.link { border: none; background: none; color: var(--accent); padding: 0 2px; }
-
-input, select {
-  font: inherit; padding: 7px 10px; border: 1px solid var(--border);
-  border-radius: 8px; background: var(--panel); color: var(--text);
-}
-input:focus, select:focus { outline: 2px solid color-mix(in srgb, var(--accent) 45%, transparent); outline-offset: -1px; }
-
-/* search */
-.searchbar { display: flex; gap: 8px; }
-.searchbar input { flex: 1; }
-.searchbar button { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
-
-.results { list-style: none; padding: 0; margin: 14px 0 0; display: flex; flex-direction: column; gap: 8px; }
-.result {
-  display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
-}
-.result-info { display: flex; flex-direction: column; gap: 2px; min-width: 220px; }
-.result-info .status { font-size: 0.85rem; color: var(--muted); }
-.result-actions { display: flex; gap: 8px; align-items: center; }
-
-/* watches */
-.watchlist { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 14px; }
-.card {
-  background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
-  padding: 16px; box-shadow: var(--shadow);
-}
-.card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
-.badge {
-  font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
-  padding: 2px 8px; border-radius: 999px;
-}
-.badge.active { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
-.badge.paused { color: var(--muted); background: var(--border); }
-.badge.triggered { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
-
-.card-body { display: flex; gap: 24px; margin: 14px 0; flex-wrap: wrap; }
-.metric { display: flex; flex-direction: column; gap: 1px; font-size: 0.9rem; }
-.metric-val { font-size: 1.15rem; font-weight: 600; }
-
-.card-actions { display: flex; gap: 8px; }
-
-/* sale state box — the main thing a user reads on a watch card */
-.sale-box {
-  border: 1px solid var(--border); border-radius: 8px;
-  padding: 10px 12px; margin: 12px 0; font-size: 0.9rem;
-}
-.sale-box.sale-good  { background: color-mix(in srgb, var(--ok) 10%, transparent);
-                       border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
-.sale-box.sale-warn  { background: color-mix(in srgb, #d9a13b 12%, transparent);
-                       border-color: color-mix(in srgb, #d9a13b 35%, transparent); }
-.sale-box.sale-muted { background: color-mix(in srgb, var(--accent) 7%, transparent); }
-.sale-headline { margin: 0; font-weight: 600; }
-.sale-guidance { margin: 6px 0 0; color: var(--muted); font-size: 0.85rem; }
-.sale-cta { display: inline-block; margin-top: 8px; color: var(--accent); font-size: 0.87rem; }
-.sale-meta { font-size: 0.8rem; margin: 0 0 10px; }
-
-.badge.sale-good  { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
-.badge.sale-warn  { color: #d9a13b; background: color-mix(in srgb, #d9a13b 16%, transparent); }
-.badge.sale-muted { color: var(--muted); background: var(--border); }
-
-/* search filter toggle */
-.filter-row {
-  display: flex; align-items: flex-start; gap: 8px;
-  margin: 10px 0 0; font-size: 0.87rem; cursor: pointer;
-}
-.filter-row input { margin-top: 2px; }
-
-/* status history (replaced the price chart when price watching was removed) */
-.card-history { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
-.status-history { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.status-history li { display: flex; align-items: center; gap: 8px; font-size: 0.88rem; }
-.badge.status-onsale { color: var(--ok); background: color-mix(in srgb, var(--ok) 14%, transparent); }
-.badge.status-offsale,
-.badge.status-cancelled { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
-.badge.status-postponed,
-.badge.status-rescheduled { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
-.badge.status-unknown { color: var(--muted); background: var(--border); }
-
-/* notifications */
-.notif-log { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 6px; }
-.notif-log li {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 9px 12px;
-}
-.notif-channel {
-  font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
-  color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent);
-  padding: 1px 7px; border-radius: 4px;
-}
-.notif-subject { flex: 1; min-width: 200px; }
-.notif-time { font-size: 0.82rem; }
-
-/* header with logout */
-.app-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
-.logout { align-self: center; white-space: nowrap; }
-
-/* auth screen */
-.auth-wrap { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
-.auth-card {
-  width: 100%; max-width: 360px; background: var(--panel); border: 1px solid var(--border);
-  border-radius: 14px; padding: 28px; box-shadow: var(--shadow); text-align: center;
-}
-.auth-card h1 { margin: 0 0 4px; font-size: 1.4rem; }
-.auth-card .tagline { margin: 0 0 18px; }
-.auth-form { display: flex; flex-direction: column; gap: 10px; text-align: left; }
-.auth-form input { width: 100%; }
-.auth-form button[type="submit"] {
-  margin-top: 4px; background: var(--accent); color: var(--accent-fg); border-color: var(--accent);
-  padding: 9px; font-weight: 600;
-}
-.app-footer {
-  margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--border);
-  font-size: 0.85rem; text-align: center;
-}
-.app-footer a { color: var(--muted); }
-
-/* Long-form pages (privacy policy) */
-.prose { max-width: 680px; }
-.prose h2 { font-size: 1.05rem; margin: 26px 0 8px; }
-.prose ul { padding-left: 20px; }
-.prose li { margin-bottom: 6px; }
-.prose p, .prose li { color: var(--muted); }
-.prose strong { color: var(--text); }
-
-.auth-card .link { margin-top: 14px; }
-.auth-links { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-.auth-card .notice { margin-top: 4px; text-align: left; }

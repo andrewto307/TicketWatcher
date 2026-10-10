@@ -1,133 +1,120 @@
-import { useCallback, useEffect, useState } from "react";
-import { api } from "./api";
-import type { Me, Notification, Watch } from "./types";
+import { useEffect, useState } from "react";
+import { BrowserRouter, Navigate, Route, Routes, useSearchParams } from "react-router-dom";
 import { clearToken, getToken } from "./auth";
-import { Login } from "./components/Login";
-import { ResetPassword } from "./components/ResetPassword";
-import { VerifyBanner } from "./components/VerifyBanner";
+import { watchSystemTheme } from "./theme";
+import { AppDataProvider } from "./AppData";
+import { ToastProvider } from "./ui/Toast";
+import { AppLayout } from "./components/AppLayout";
+import { Landing } from "./components/Landing";
 import { Privacy } from "./components/Privacy";
-import { AccountSettings } from "./components/AccountSettings";
-import { SearchBar } from "./components/SearchBar";
-import { WatchList } from "./components/WatchList";
-import { NotificationLog } from "./components/NotificationLog";
+import { ResetPassword } from "./components/ResetPassword";
+import { SearchPage } from "./pages/SearchPage";
+import { WatchesPage } from "./pages/WatchesPage";
+import { SavedPage } from "./pages/SavedPage";
+import { SettingsPage } from "./pages/SettingsPage";
 
-// The app has no router: these read the URL the browser landed on. Deep links
-// work because the Go SPA handler serves index.html for any non-/api path.
-const resetToken =
-  window.location.pathname === "/reset-password"
-    ? new URLSearchParams(window.location.search).get("token")
-    : null;
-
-const isPrivacyPage = window.location.pathname === "/privacy";
-
-// Set by the backend's redirect after it consumes a verification link.
-const verifyResult = (() => {
-  const q = new URLSearchParams(window.location.search);
-  if (q.has("verified")) return "ok" as const;
-  if (q.has("verify_error")) return "failed" as const;
-  return null;
-})();
+// The router lives inside App rather than around it in main.tsx, so tests can
+// set window.location and render <App /> directly.
 
 export function App() {
   const [authed, setAuthed] = useState(!!getToken());
-  const [me, setMe] = useState<Me | null>(null);
-  const [watches, setWatches] = useState<Watch[]>([]);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [verifyBanner, setVerifyBanner] = useState(verifyResult);
 
-  const refresh = useCallback(async () => {
-    try {
-      const [m, w, n] = await Promise.all([api.me(), api.listWatches(), api.notifications()]);
-      setMe(m);
-      setWatches(w);
-      setNotifications(n);
-      setError(null);
-    } catch (e) {
-      setError(String(e));
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!authed) return;
-    refresh();
-    const t = setInterval(refresh, 20_000); // near-live: re-read the DB every 20s
-    return () => clearInterval(t);
-  }, [authed, refresh]);
-
-  // Clear the one-shot ?verified= flag from the address bar so a refresh (or a
-  // shared URL) doesn't replay the message.
-  useEffect(() => {
-    if (verifyResult) window.history.replaceState({}, "", "/");
-  }, []);
-
-  // Readable without an account — a privacy policy you must log in to read is useless.
-  if (isPrivacyPage) {
-    return <Privacy />;
-  }
-
-  if (resetToken) {
-    return <ResetPassword token={resetToken} />;
-  }
-
-  if (!authed) {
-    return <Login onAuthed={() => setAuthed(true)} />;
-  }
+  // While the preference is "system", follow the OS if it changes mid-session.
+  useEffect(watchSystemTheme, []);
 
   function logout() {
     clearToken();
-    setMe(null);
-    setWatches([]);
-    setNotifications([]);
     setAuthed(false);
   }
 
   return (
-    <div className="app">
-      <header className="app-header">
-        <div>
-          <h1>🎟️ TicketWatcher</h1>
-          <p className="tagline">Track live events and get alerted the moment tickets go on sale.</p>
-        </div>
-        <button className="logout" onClick={logout}>Log out</button>
-      </header>
+    <ToastProvider>
+      <BrowserRouter>
+        <Routes>
+          {/* Readable without an account — a privacy policy you must log in to
+              read is useless. */}
+          <Route path="/privacy" element={<Privacy />} />
+          {/* Arrives from an email, so it has to be a real page, not a modal. */}
+          <Route path="/reset-password" element={<ResetPasswordRoute />} />
 
-      {verifyBanner === "ok" && (
-        <div className="notice">
+          {authed ? (
+            <Route element={<AuthedShell onLogout={logout} />}>
+              <Route path="/" element={<SearchPage />} />
+              <Route path="/watches" element={<WatchesPage />} />
+              <Route path="/saved" element={<SavedPage />} />
+              <Route path="/settings" element={<SettingsPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Route>
+          ) : (
+            <>
+              <Route path="/" element={<Landing onAuthed={() => setAuthed(true)} />} />
+              {/* Signed-out visitors have no business on the app routes. */}
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </>
+          )}
+        </Routes>
+      </BrowserRouter>
+    </ToastProvider>
+  );
+}
+
+function AuthedShell({ onLogout }: { onLogout: () => void }) {
+  return (
+    <AppDataProvider>
+      <VerifyResultNotice />
+      <AppLayout onLogout={onLogout} />
+    </AppDataProvider>
+  );
+}
+
+/**
+ * The backend redirects to /?verified=1 or /?verify_error=1 after consuming a
+ * verification link. Shown once, then scrubbed from the address bar so a
+ * refresh or a shared URL doesn't replay it.
+ */
+function VerifyResultNotice() {
+  const [params, setParams] = useSearchParams();
+  const result = params.has("verified") ? "ok" : params.has("verify_error") ? "failed" : null;
+  const [visible, setVisible] = useState(result);
+
+  useEffect(() => {
+    if (!result) return;
+    const next = new URLSearchParams(params);
+    next.delete("verified");
+    next.delete("verify_error");
+    setParams(next, { replace: true });
+    // Only on the first render that carried the flag.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!visible) return null;
+
+  return (
+    <div className="mx-auto w-full max-w-5xl px-4 pt-4">
+      {visible === "ok" ? (
+        <div className="flex items-center justify-between gap-3 rounded-lg border border-good-border
+                        bg-good-soft px-4 py-3 text-sm text-good">
           <span>✅ Your email is confirmed — alerts are on.</span>
-          <button type="button" onClick={() => setVerifyBanner(null)}>Dismiss</button>
+          <button
+            type="button"
+            onClick={() => setVisible(null)}
+            className="shrink-0 font-medium underline-offset-4 hover:underline"
+          >
+            Dismiss
+          </button>
         </div>
-      )}
-      {verifyBanner === "failed" && (
-        <div className="error">
+      ) : (
+        <div className="rounded-lg border border-warn-border bg-warn-soft px-4 py-3 text-sm text-warn">
           That verification link is invalid or has expired. Use “Resend email” below to get a new one.
         </div>
       )}
-
-      {me && !me.email_verified && <VerifyBanner email={me.email} />}
-
-      {error && <div className="error">Can't reach the backend: {error}</div>}
-
-      <section>
-        <h2>Find an event</h2>
-        <SearchBar onWatchCreated={refresh} />
-      </section>
-
-      <section>
-        <h2>My watches <span className="count">{watches.length}</span></h2>
-        <WatchList watches={watches} onChanged={refresh} />
-      </section>
-
-      <section>
-        <h2>Notifications <span className="count">{notifications.length}</span></h2>
-        <NotificationLog notifications={notifications} />
-      </section>
-
-      {me && <AccountSettings me={me} onChanged={refresh} />}
-
-      <footer className="app-footer">
-        <a href="/privacy">Privacy policy</a>
-      </footer>
     </div>
   );
+}
+
+function ResetPasswordRoute() {
+  const [params] = useSearchParams();
+  const token = params.get("token");
+  if (!token) return <Navigate to="/" replace />;
+  return <ResetPassword token={token} />;
 }

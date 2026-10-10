@@ -1,20 +1,39 @@
-// Served at /privacy (no router — see App.tsx). Deliberately plain and specific:
-// a privacy policy that describes what this app actually does is more useful,
-// and more honest, than boilerplate copied from a generator.
+import { Link } from "react-router-dom";
+import { Wordmark } from "./Wordmark";
+
+// Deliberately plain and specific: a privacy policy that describes what this
+// app actually does is more useful, and more honest, than boilerplate copied
+// from a generator.
 export function Privacy() {
   return (
-    <div className="app">
-      <header className="app-header">
-        <div>
-          <h1>Privacy Policy</h1>
-          <p className="tagline">TicketWatcher</p>
+    <div className="min-h-dvh bg-canvas">
+      <header className="border-b border-line">
+        <div className="mx-auto flex h-14 max-w-3xl items-center justify-between px-4">
+          <Link to="/" aria-label="TicketWatcher home" className="rounded-lg">
+            <Wordmark />
+          </Link>
+          <Link
+            to="/"
+            className="inline-flex h-9 items-center rounded-lg border border-line bg-surface px-3
+                       text-sm font-medium text-ink transition-colors hover:bg-surface-2"
+          >
+            Back to app
+          </Link>
         </div>
-        <button className="logout" onClick={() => (window.location.href = "/")}>
-          Back to app
-        </button>
       </header>
 
-      <section className="prose">
+      <main className="mx-auto max-w-3xl px-4 py-10">
+        <h1 className="text-3xl font-semibold tracking-tight text-ink">Privacy Policy</h1>
+        <p className="mt-1 text-muted">TicketWatcher</p>
+      <section
+          className="mt-8 flex flex-col gap-4 text-ink
+                     [&_h2]:mt-6 [&_h2]:text-base [&_h2]:font-semibold
+                     [&_li]:text-muted [&_li]:leading-relaxed
+                     [&_li_strong]:text-ink
+                     [&_p]:text-muted [&_p]:leading-relaxed
+                     [&_p_strong]:text-ink
+                     [&_ul]:flex [&_ul]:list-disc [&_ul]:flex-col [&_ul]:gap-2 [&_ul]:pl-5"
+        >
         <h2>What we collect</h2>
         <ul>
           <li>
@@ -87,8 +106,9 @@ export function Privacy() {
         <h2>Contact</h2>
         <p>Questions or requests: reply to any email you've received from this service.</p>
 
-        <p className="muted">This is a personal, non-commercial project.</p>
-      </section>
+        <p className="text-muted">This is a personal, non-commercial project.</p>
+        </section>
+      </main>
     </div>
   );
 }

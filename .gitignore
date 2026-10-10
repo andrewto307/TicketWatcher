@@ -20,6 +20,13 @@ web/node_modules/
 web/dist/*
 !web/dist/.gitkeep
 
+# Playwright: downloaded browsers live outside the repo, but a failed run
+# leaves traces and reports behind.
+web/test-results/
+web/playwright-report/
+web/blob-report/
+web/.playwright/
+
 # Editor / OS
 .DS_Store
 .idea/

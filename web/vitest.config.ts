@@ -10,5 +10,7 @@ export default defineConfig({
     // Components read window.location for routing and call window.location.href
     // on navigation, so each file gets a fresh jsdom rather than sharing one.
     restoreMocks: true,
+    // Playwright specs live in e2e/ and are run by their own runner.
+    exclude: ["**/node_modules/**", "**/dist/**", "e2e/**"],
   },
 });

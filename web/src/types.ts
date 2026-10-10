@@ -38,7 +38,7 @@ export interface Watch {
   event_url: string;
   event_date: string | null;
   condition_type: "becomes_available";
-  status: "active" | "paused" | "triggered";
+  status: "active" | "paused";
   availability: Availability | null;
   poll_interval_s: number;
   created_at: string;

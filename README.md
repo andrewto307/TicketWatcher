@@ -65,8 +65,9 @@ generate type-safe query code from plain SQL, and
 [goose](https://github.com/pressly/goose) for migrations (embedded in the binary
 and applied on boot). Auth is JWT + bcrypt.
 
-**Frontend** — React 18 + TypeScript, built with Vite. No router and no state
-library; the app is small enough not to need either.
+**Frontend** — React 18 + TypeScript, built with Vite, styled with Tailwind CSS
+and a small set of local UI primitives. `react-router` handles the client-side
+routes; there is no state library, as React state is enough at this size.
 
 **Database** — PostgreSQL. Local dev runs 16 via Docker; production runs Fly's
 Postgres Flex.
@@ -156,5 +157,6 @@ email without a login.
 ```bash
 make test                    # unit
 make test-int                # integration (needs `docker compose up -d db`)
-cd web && npm test           # frontend
+cd web && npm test           # frontend unit
+cd web && npm run test:e2e   # browser smoke tests (Playwright)
 ```
