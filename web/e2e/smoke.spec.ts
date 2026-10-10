@@ -15,8 +15,8 @@ test.describe("logged out", () => {
     await expect(page.getByRole("heading", { name: /go on sale/i })).toBeVisible();
     await expect(page.getByRole("banner").getByRole("button", { name: "Log in" })).toBeVisible();
     await expect(page.getByRole("button", { name: /get started/i })).toBeVisible();
-    await expect(page.getByRole("heading", { name: /how it works/i })).toBeVisible();
-    await expect(page.getByRole("region", { name: /screenshots/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /easy to search/i })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Get alerted" })).toBeVisible();
     await expect(page.getByRole("link", { name: /privacy policy/i })).toBeVisible();
 
     // No dashboard chrome leaking onto a page for people without an account.
@@ -348,5 +348,194 @@ test.describe("theme", () => {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     // Choosing a theme must not dismiss the menu mid-decision.
     await expect(page.getByRole("menu")).toBeVisible();
+  });
+});
+
+test.describe("scroll reveal", () => {
+  test("sections below the fold are hidden, then revealed on scroll", async ({ page }) => {
+    await page.goto("/");
+
+    // The reveal wraps the block, so assert on the wrapper that carries the
+    // inline style rather than on the heading inside it.
+    const block = page.getByRole("region", { name: "Search" }).locator("div[style]").first();
+    // Starts transparent and offset — far enough down that it is off screen.
+    await expect(block).toHaveCSS("opacity", "0");
+
+    await block.scrollIntoViewIfNeeded();
+    await expect(block).toHaveCSS("opacity", "1");
+    await expect(block).toHaveCSS("transform", "none");
+  });
+
+  test("each landing section owns a full screen", async ({ page }) => {
+    await page.goto("/");
+
+    const { vh, heights } = await page.evaluate(() => ({
+      vh: window.innerHeight,
+      heights: [...document.querySelectorAll("main > section")].map((s) =>
+        Math.round(s.getBoundingClientRect().height),
+      ),
+    }));
+
+    // Hero plus one screen per feature, so scrolling moves between whole ideas
+    // rather than through a continuous column.
+    expect(heights).toHaveLength(4);
+    for (const h of heights) {
+      // Allow for the 3.5rem header the sections subtract.
+      expect(h).toBeGreaterThanOrEqual(vh - 60);
+    }
+  });
+
+  test("the first screen is only the message and the two buttons", async ({ page }) => {
+    await page.goto("/");
+
+    const fold = await page.evaluate(() => window.innerHeight);
+    const gallery = await page
+      .getByRole("region", { name: "Search" })
+      .evaluate((el) => el.getBoundingClientRect().top);
+
+    // Everything past the pitch has to be earned by scrolling.
+    expect(gallery).toBeGreaterThanOrEqual(fold);
+    await expect(page.getByRole("heading", { name: /go on sale/i })).toBeInViewport();
+    await expect(page.getByRole("button", { name: /get started/i })).toBeInViewport();
+  });
+
+  test("the hero is not hidden, because it is visible at first paint", async ({ page }) => {
+    await page.goto("/");
+
+    // Animating in something the user is already looking at reads as a glitch.
+    await expect(page.getByRole("heading", { name: /go on sale/i })).toHaveCSS("opacity", "1");
+  });
+
+  test("reveal does not reverse when scrolling back up", async ({ page }) => {
+    await page.goto("/");
+
+    const block = page.getByRole("region", { name: "Search" }).locator("div[style]").first();
+    await block.scrollIntoViewIfNeeded();
+    await expect(block).toHaveCSS("opacity", "1");
+
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: "instant" }));
+    await page.waitForTimeout(400);
+
+    // Re-animating on the way back up draws attention to the mechanism.
+    await expect(block).toHaveCSS("opacity", "1");
+  });
+
+  test("every landing section is readable once scrolled through", async ({ page }) => {
+    await page.goto("/");
+    await page.evaluate(async () => {
+      for (let y = 0; y <= document.body.scrollHeight; y += 400) {
+        window.scrollTo({ top: y, behavior: "instant" });
+        await new Promise((r) => setTimeout(r, 60));
+      }
+    });
+    await page.waitForTimeout(600);
+
+    // A reveal that fails to fire must not be able to swallow the page.
+    for (const text of [/go on sale/i, /easy to search/i, /start watching/i, /the moment it goes on sale/i]) {
+      await expect(page.getByText(text).first()).toBeVisible();
+    }
+  });
+});
+
+test.describe("gallery images", () => {
+  test("all three load, share one shape, and are lazy", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("region", { name: "Get alerted" }).scrollIntoViewIfNeeded();
+
+    const imgs = page.locator("main img");
+    await expect(imgs).toHaveCount(3);
+
+    const info = await imgs.evaluateAll((els) =>
+      (els as HTMLImageElement[]).map((i) => ({
+        loaded: i.complete && i.naturalWidth > 0,
+        ratio: +(i.naturalWidth / i.naturalHeight).toFixed(2),
+        lazy: i.loading === "lazy",
+        alt: i.alt.length,
+      })),
+    );
+
+    for (const i of info) {
+      expect(i.loaded, "image failed to load").toBe(true);
+      // Padded to one ratio at build time so the tiles match without cropping
+      // anything out of a screenshot.
+      expect(i.ratio).toBe(1.6);
+      expect(i.lazy).toBe(true);
+      expect(i.alt).toBeGreaterThan(10);
+    }
+  });
+})
+
+test.describe("feature screens", () => {
+  const screens = [
+    { region: "Search", heading: /easy to search/i },
+    { region: "Watch", heading: /start watching/i },
+    { region: "Get alerted", heading: /the moment it goes on sale/i },
+  ];
+
+  for (const [i, sc] of screens.entries()) {
+    test(`"${sc.region}" is one screen with its own message and screenshot`, async ({ page }) => {
+      await page.goto("/");
+      const section = page.getByRole("region", { name: sc.region });
+      await section.scrollIntoViewIfNeeded();
+
+      await expect(section.getByRole("heading", { name: sc.heading })).toBeVisible();
+      await expect(section.getByRole("img")).toHaveCount(1);
+
+      const { h, vh } = await page.evaluate(
+        (name) => ({
+          h: Math.round(
+            document
+              .querySelector(`section[aria-label="${name}"]`)!
+              .getBoundingClientRect().height,
+          ),
+          vh: window.innerHeight,
+        }),
+        sc.region,
+      );
+      expect(h).toBeGreaterThanOrEqual(vh - 60);
+    });
+
+    test(`"${sc.region}" alternates the screenshot side on wide viewports`, async ({ page }) => {
+      await page.goto("/");
+      const section = page.getByRole("region", { name: sc.region });
+      await section.scrollIntoViewIfNeeded();
+
+      const vw = await page.evaluate(() => window.innerWidth);
+      test.skip(vw < 1024, "single column below lg");
+
+      const imgLeft = await section.getByRole("img").evaluate((e) => e.getBoundingClientRect().left);
+      const headLeft = await section
+        .getByRole("heading")
+        .evaluate((e) => e.getBoundingClientRect().left);
+
+      // Odd-indexed screens flip, so the page does not read as three identical rows.
+      if (i % 2 === 1) expect(imgLeft).toBeLessThan(headLeft);
+      else expect(imgLeft).toBeGreaterThan(headLeft);
+    });
+  }
+});
+
+test.describe("scroll affordance", () => {
+  test("a cue invites the first scroll, then gets out of the way", async ({ page }) => {
+    await page.goto("/");
+
+    // The hero ends exactly at the fold, so without this the page reads as a
+    // finished one-screen site and the product is never seen.
+    const cue = page.locator(".animate-bob");
+    await expect(cue).toBeVisible();
+    await expect(cue.locator("..")).toHaveCSS("opacity", "1");
+
+    await page.evaluate(() => window.scrollTo({ top: 400, behavior: "instant" }));
+    await expect(cue.locator("..")).toHaveCSS("opacity", "0");
+  });
+
+  test("the page does not snap, so scrolling stays under the user's control", async ({ page }) => {
+    await page.goto("/");
+
+    // Tried and reverted: CSS scroll-snap on the document made every
+    // scroll-into-view oscillate, which broke clicking throughout the suite.
+    expect(
+      await page.evaluate(() => getComputedStyle(document.documentElement).scrollSnapType),
+    ).toBe("none");
   });
 });

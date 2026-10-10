@@ -1,25 +1,116 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Bell, Clock, Search, ShieldCheck } from "lucide-react";
 import { Wordmark } from "./Wordmark";
+import { useReveal } from "../useReveal";
+import eventSearchShot from "../assets/eventSearch.webp";
+import watchListShot from "../assets/watchList.webp";
+import emailSentShot from "../assets/emailSent.webp";
 import { LoginDialog } from "./LoginDialog";
 import { Button } from "../ui/Button";
 import { ThemeToggle } from "./ThemeToggle";
+import { ScrollCue } from "./ScrollCue";
 
 // The logged-out root. Its job is to say what the service does before asking
 // anyone to sign up, which the old bare login box did not.
 
-const steps = [
-  { icon: Search, title: "Find the event", body: "Search Ticketmaster for the artist, team, or show you're after." },
-  { icon: Clock, title: "We watch it for you", body: "We check the on-sale status continuously so you don't have to keep refreshing." },
-  { icon: Bell, title: "You get an email", body: "Presale opening, public sale, a date announcement, a cancellation — the moment it happens." },
+// Each screenshot gets a screen of its own and makes one point. This replaces
+// the old thumbnail gallery plus a separate "How it works" list, which told the
+// same three-step story twice.
+const features = [
+  {
+    icon: Search,
+    eyebrow: "Search",
+    title: "Easy to search for your favourite events",
+    body: "One search across Ticketmaster — artists, teams, shows. Filter out anything that has already gone on sale, so you only see what is still worth watching.",
+    src: eventSearchShot,
+    alt: "Search results listing events with their on-sale status, each with Watch and Save buttons",
+  },
+  {
+    icon: Clock,
+    eyebrow: "Watch",
+    title: "Start watching its status, and that's it",
+    body: "No refreshing, no calendar reminders. We check each event around the clock and keep its sale status up to date for you.",
+    src: watchListShot,
+    alt: "Watch list showing each tracked event and when its sale opens",
+  },
+  {
+    icon: Bell,
+    eyebrow: "Get alerted",
+    title: "An email the moment it goes on sale",
+    body: "Presales included, along with date announcements, cancellations and reschedules. Become an early bird today.",
+    src: emailSentShot,
+    alt: "An alert email announcing that a presale has opened",
+  },
 ];
 
-// Placeholders until real screenshots are exported; the layout is the point.
-const shots = [
-  { label: "Searching for an event", hint: "search results with on-sale status" },
-  { label: "Your watch list", hint: "cards showing each event's sale state" },
-  { label: "The alert email", hint: "what lands in your inbox" },
-];
+// Each landing section owns a full screen, so scrolling moves between whole
+// ideas rather than through a continuous column. min-h rather than h: a short
+// viewport or long text grows the section instead of clipping it.
+const screen = "flex min-h-[calc(100dvh-3.5rem)] flex-col justify-center py-16";
+
+/**
+ * Wraps one block so it fades and rises when scrolled to. Staggering siblings
+ * by ~60ms is what reads as considered; everything landing at once reads cheap.
+ */
+function Reveal({
+  children,
+  delay = 0,
+  as: Tag = "div",
+  className,
+}: {
+  children: ReactNode;
+  delay?: number;
+  as?: "div" | "figure" | "h2";
+  className?: string;
+}) {
+  const { ref, style } = useReveal<HTMLElement>(delay);
+  return (
+    <Tag ref={ref as never} style={style} className={className}>
+      {children}
+    </Tag>
+  );
+}
+
+/** One screen: a single claim, with the screenshot that backs it up. */
+function Feature({
+  feature: f,
+  flip,
+}: {
+  feature: (typeof features)[number];
+  flip: boolean;
+}) {
+  const text = useReveal<HTMLDivElement>();
+  const shot = useReveal<HTMLDivElement>(80);
+
+  return (
+    <section aria-label={f.eyebrow} className={`${screen} border-t border-line`}>
+      <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-16">
+        <div ref={text.ref} style={text.style} className={flip ? "lg:order-2" : undefined}>
+          <span className="inline-flex items-center gap-2 text-sm font-medium text-accent">
+            <f.icon aria-hidden className="size-4" />
+            {f.eyebrow}
+          </span>
+          <h2 className="mt-3 text-3xl font-semibold tracking-tight text-balance text-ink sm:text-4xl">
+            {f.title}
+          </h2>
+          <p className="mt-4 max-w-md text-lg text-muted">{f.body}</p>
+        </div>
+
+        <div ref={shot.ref} style={shot.style} className={flip ? "lg:order-1" : undefined}>
+          <img
+            src={f.src}
+            alt={f.alt}
+            width={760}
+            height={475}
+            loading="lazy"
+            decoding="async"
+            className="aspect-[16/10] w-full rounded-xl border border-line object-cover shadow-lg"
+          />
+        </div>
+      </div>
+    </section>
+  );
+}
 
 export function Landing({ onAuthed }: { onAuthed: () => void }) {
   const [open, setOpen] = useState(false);
@@ -47,7 +138,8 @@ export function Landing({ onAuthed }: { onAuthed: () => void }) {
       </header>
 
       <main className="mx-auto max-w-5xl px-4">
-        <section className="py-16 text-center sm:py-24">
+        {/* The message and the two buttons are the whole first impression. */}
+        <section className={`${screen} text-center`}>
           <h1 className="mx-auto max-w-3xl text-4xl font-semibold tracking-tight text-balance text-ink sm:text-5xl">
             Want to get notified when your favourite events go on sale?
           </h1>
@@ -67,44 +159,22 @@ export function Landing({ onAuthed }: { onAuthed: () => void }) {
             <ShieldCheck aria-hidden className="size-4" />
             No tracking, no ads. Just an email address.
           </p>
+          <ScrollCue />
         </section>
 
-        <section aria-label="Screenshots" className="pb-16">
-          <div className="grid gap-4 sm:grid-cols-3">
-            {shots.map((s) => (
-              <figure key={s.label} className="flex flex-col gap-2">
-                <div
-                  className="grid aspect-[4/3] place-items-center rounded-xl border border-line
-                             bg-surface-2 px-4 text-center text-xs text-muted"
-                >
-                  {s.hint}
-                </div>
-                <figcaption className="text-sm text-muted">{s.label}</figcaption>
-              </figure>
-            ))}
-          </div>
-        </section>
+        {features.map((f, i) => (
+          <Feature key={f.eyebrow} feature={f} flip={i % 2 === 1} />
+        ))}
 
-        <section className="border-t border-line py-16">
-          <h2 className="text-center text-2xl font-semibold tracking-tight text-ink">How it works</h2>
-          <div className="mt-10 grid gap-8 sm:grid-cols-3">
-            {steps.map((s) => (
-              <div key={s.title}>
-                <span aria-hidden className="grid size-9 place-items-center rounded-lg bg-accent-soft text-accent">
-                  <s.icon className="size-5" />
-                </span>
-                <h3 className="mt-3 font-semibold text-ink">{s.title}</h3>
-                <p className="mt-1 text-sm text-muted">{s.body}</p>
-              </div>
-            ))}
-          </div>
-        </section>
       </main>
 
       <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-5xl justify-center px-4 py-6">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-center gap-x-5 gap-y-2 px-4 py-6">
           <a href="/privacy" className="text-sm text-muted underline-offset-4 hover:text-ink hover:underline">
             Privacy policy
+          </a>
+          <a href="mailto:ticketmasterwatcher@toandrew.com" className="text-sm text-muted underline-offset-4 hover:text-ink hover:underline">
+            Contact
           </a>
         </div>
       </footer>

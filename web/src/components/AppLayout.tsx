@@ -78,10 +78,13 @@ export function AppLayout({ onLogout }: { onLogout: () => void }) {
       </main>
 
       <footer className="border-t border-line">
-        <div className="mx-auto flex max-w-5xl justify-center px-4 py-6">
+        <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-center gap-x-5 gap-y-2 px-4 py-6">
           <Link to="/privacy" className="text-sm text-muted underline-offset-4 hover:text-ink hover:underline">
             Privacy policy
           </Link>
+          <a href="mailto:ticketmasterwatcher@toandrew.com" className="text-sm text-muted underline-offset-4 hover:text-ink hover:underline">
+            Contact
+          </a>
         </div>
       </footer>
     </div>

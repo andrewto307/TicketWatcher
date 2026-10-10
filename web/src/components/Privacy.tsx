@@ -104,9 +104,15 @@ export function Privacy() {
         </p>
 
         <h2>Contact</h2>
-        <p>Questions or requests: reply to any email you've received from this service.</p>
-
-        <p className="text-muted">This is a personal, non-commercial project.</p>
+        <p>
+          Questions or feedback:{" "}
+          <a
+            href="mailto:ticketmasterwatcher@toandrew.com"
+            className="text-accent underline-offset-4 hover:underline"
+          >
+            ticketmasterwatcher@toandrew.com
+          </a>
+        </p>
         </section>
       </main>
     </div>

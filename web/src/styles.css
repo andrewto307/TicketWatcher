@@ -149,3 +149,18 @@
 @utility animate-fade-in {
   animation: tw-fade-in 160ms ease-out both;
 }
+
+/* The hero's scroll cue. Covered by the reduced-motion rule above. */
+@keyframes tw-bob {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(4px);
+  }
+}
+
+@utility animate-bob {
+  animation: tw-bob 1.8s ease-in-out infinite;
+}

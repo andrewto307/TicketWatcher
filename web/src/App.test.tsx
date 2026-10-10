@@ -81,8 +81,11 @@ describe("App — the logged-out landing page", () => {
   it("explains the product before asking anyone to sign up", async () => {
     await renderAt("/");
 
-    expect(await screen.findByRole("heading", { name: /go on sale/i })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: /how it works/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /go on sale\?/i })).toBeInTheDocument();
+    // One screen per claim, each backed by a screenshot.
+    expect(screen.getByRole("heading", { name: /easy to search/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /start watching/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /the moment it goes on sale/i })).toBeInTheDocument();
     // No account needed to read any of this, so nothing is fetched.
     expect(api.me).not.toHaveBeenCalled();
   });
