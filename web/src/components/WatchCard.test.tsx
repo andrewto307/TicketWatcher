@@ -132,12 +132,52 @@ describe("WatchCard — actions", () => {
     await waitFor(() => expect(onChanged).toHaveBeenCalled());
   });
 
-  it("resumes a paused watch", async () => {
+  it("moves a saved watch back to watching", async () => {
+    // One vocabulary: a card shows the button for the state it is not in, so a
+    // saved card offers Watch rather than Resume.
     render(<WatchCard watch={watch({ status: "paused" })} onChanged={vi.fn()} />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Resume" }));
+    await userEvent.click(screen.getByRole("button", { name: "Watch" }));
 
     expect(api.updateWatch).toHaveBeenCalledWith(1, { status: "active" });
+  });
+
+  it("reports that no alerts have been sent, rather than showing nothing", () => {
+    render(<WatchCard watch={watch()} onChanged={vi.fn()} />);
+
+    // For an event whose sale hasn't opened, silence is the expected state and
+    // saying so is more reassuring than an empty space.
+    expect(screen.getByText(/no alerts sent yet/i)).toBeInTheDocument();
+  });
+
+  it("names the alerts that were sent for this event", () => {
+    render(
+      <WatchCard
+        watch={watch()}
+        alerts={[
+          {
+            id: 9,
+            watch_id: 1,
+            channel: "email",
+            sent_at: "2026-01-02T10:00:00Z",
+            payload: { subject: "Presale open" },
+          },
+        ]}
+        onChanged={vi.fn()}
+      />,
+    );
+
+    // The count alone would not tell the user what they were told.
+    expect(screen.getByText(/1 alert sent/i)).toBeInTheDocument();
+    expect(screen.getByText(/presale open/i)).toBeInTheDocument();
+  });
+
+  it("links out to Ticketmaster from the actions row", () => {
+    render(<WatchCard watch={watch()} onChanged={vi.fn()} />);
+
+    const link = screen.getByRole("link", { name: /ticketmaster/i });
+    expect(link).toHaveAttribute("href", "https://ticketmaster.test/e/TM1");
+    expect(link).toHaveAttribute("target", "_blank");
   });
 
   it("asks for confirmation before deleting, and does nothing if declined", async () => {
@@ -217,5 +257,36 @@ describe("WatchCard — status history", () => {
 
     expect(await screen.findByText(/no changes recorded yet/i)).toBeInTheDocument();
     expect(screen.getByText("Test Show")).toBeInTheDocument();
+  });
+});
+
+describe("WatchCard — sale state on the card edge", () => {
+  const edge = (el: HTMLElement) => el.closest('[class*="border-l-4"]')?.className ?? "";
+
+  it("marks an on-sale event with the good tone", () => {
+    render(<WatchCard watch={watch({ sale_state: "on_sale" })} onChanged={vi.fn()} />);
+
+    expect(edge(screen.getByText("Test Show"))).toContain("border-l-good");
+  });
+
+  it("marks a closed sale with the warning tone", () => {
+    render(<WatchCard watch={watch({ sale_state: "sale_closed" })} onChanged={vi.fn()} />);
+
+    expect(edge(screen.getByText("Test Show"))).toContain("border-l-warn");
+  });
+
+  it("leaves a scheduled sale neutral", () => {
+    render(<WatchCard watch={watch({ sale_state: "onsale_scheduled" })} onChanged={vi.fn()} />);
+
+    expect(edge(screen.getByText("Test Show"))).toContain("border-l-line-strong");
+  });
+
+  it("never carries state by colour alone", () => {
+    render(<WatchCard watch={watch({ sale_state: "on_sale" })} onChanged={vi.fn()} />);
+
+    // The edge is a second encoding; the badge and the message still say it,
+    // so the card works for anyone who cannot distinguish the colours.
+    expect(screen.getByText("On sale")).toBeInTheDocument();
+    expect(screen.getByText(/on sale to the general public/i)).toBeInTheDocument();
   });
 });

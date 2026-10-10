@@ -1,7 +1,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Login } from "./Login";
+import { LoginDialog } from "./LoginDialog";
 import { api } from "../api";
 import { getToken } from "../auth";
 
@@ -21,7 +21,7 @@ const password = () => screen.getByPlaceholderText(/password \(min 8/i);
 describe("Login — signing in", () => {
   it("stores the token and tells the app it is authenticated", async () => {
     const onAuthed = vi.fn();
-    render(<Login onAuthed={onAuthed} />);
+    render(<LoginDialog open onClose={vi.fn()} onAuthed={onAuthed} />);
 
     await userEvent.type(email(), "u@example.test");
     await userEvent.type(password(), "password123");
@@ -35,7 +35,7 @@ describe("Login — signing in", () => {
   it("shows the server's message and does not authenticate on failure", async () => {
     vi.mocked(api.login).mockRejectedValue(new Error("invalid email or password"));
     const onAuthed = vi.fn();
-    render(<Login onAuthed={onAuthed} />);
+    render(<LoginDialog open onClose={vi.fn()} onAuthed={onAuthed} />);
 
     await userEvent.type(email(), "u@example.test");
     await userEvent.type(password(), "wrongpassword");
@@ -48,7 +48,7 @@ describe("Login — signing in", () => {
 
   it("surfaces the rate-limit message rather than a generic failure", async () => {
     vi.mocked(api.login).mockRejectedValue(new Error("too many requests — please slow down"));
-    render(<Login onAuthed={vi.fn()} />);
+    render(<LoginDialog open onClose={vi.fn()} onAuthed={vi.fn()} />);
 
     await userEvent.type(email(), "u@example.test");
     await userEvent.type(password(), "password123");
@@ -61,7 +61,7 @@ describe("Login — signing in", () => {
 describe("Login — registering", () => {
   it("switches to register mode and creates the account", async () => {
     const onAuthed = vi.fn();
-    render(<Login onAuthed={onAuthed} />);
+    render(<LoginDialog open onClose={vi.fn()} onAuthed={onAuthed} />);
 
     await userEvent.click(screen.getByRole("button", { name: /need an account/i }));
     await userEvent.type(email(), "new@example.test");
@@ -73,7 +73,7 @@ describe("Login — registering", () => {
   });
 
   it("requires a password of at least 8 characters at the form level", async () => {
-    render(<Login onAuthed={vi.fn()} />);
+    render(<LoginDialog open onClose={vi.fn()} onAuthed={vi.fn()} />);
 
     expect(password()).toHaveAttribute("minLength", "8");
     expect(password()).toBeRequired();
@@ -82,7 +82,7 @@ describe("Login — registering", () => {
 
   it("clears a previous error when switching mode", async () => {
     vi.mocked(api.login).mockRejectedValue(new Error("invalid email or password"));
-    render(<Login onAuthed={vi.fn()} />);
+    render(<LoginDialog open onClose={vi.fn()} onAuthed={vi.fn()} />);
 
     await userEvent.type(email(), "u@example.test");
     await userEvent.type(password(), "password123");
@@ -97,7 +97,7 @@ describe("Login — registering", () => {
 
 describe("Login — forgotten password", () => {
   it("is reachable only from the login screen", async () => {
-    render(<Login onAuthed={vi.fn()} />);
+    render(<LoginDialog open onClose={vi.fn()} onAuthed={vi.fn()} />);
     expect(screen.getByRole("button", { name: /forgot password/i })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /need an account/i }));
@@ -105,7 +105,7 @@ describe("Login — forgotten password", () => {
   });
 
   it("asks only for an email", async () => {
-    render(<Login onAuthed={vi.fn()} />);
+    render(<LoginDialog open onClose={vi.fn()} onAuthed={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: /forgot password/i }));
 
     expect(email()).toBeInTheDocument();
@@ -114,7 +114,7 @@ describe("Login — forgotten password", () => {
   });
 
   it("gives the same confirmation regardless of whether the account exists", async () => {
-    render(<Login onAuthed={vi.fn()} />);
+    render(<LoginDialog open onClose={vi.fn()} onAuthed={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: /forgot password/i }));
     await userEvent.type(email(), "maybe@example.test");
     await userEvent.click(screen.getByRole("button", { name: /send reset link/i }));
@@ -128,7 +128,7 @@ describe("Login — forgotten password", () => {
   });
 
   it("offers a way back to login after sending", async () => {
-    render(<Login onAuthed={vi.fn()} />);
+    render(<LoginDialog open onClose={vi.fn()} onAuthed={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: /forgot password/i }));
     await userEvent.type(email(), "u@example.test");
     await userEvent.click(screen.getByRole("button", { name: /send reset link/i }));
@@ -141,7 +141,7 @@ describe("Login — forgotten password", () => {
 
 describe("Login — privacy", () => {
   it("links the privacy policy before signup, which is when it matters", () => {
-    render(<Login onAuthed={vi.fn()} />);
+    render(<LoginDialog open onClose={vi.fn()} onAuthed={vi.fn()} />);
 
     expect(screen.getByRole("link", { name: /privacy policy/i })).toHaveAttribute("href", "/privacy");
   });
