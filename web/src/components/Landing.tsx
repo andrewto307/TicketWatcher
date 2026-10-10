@@ -77,12 +77,16 @@ function Reveal({
 }
 
 /** One screen: a single claim, with the screenshot that backs it up. */
+const washes = ["wash-1", "wash-2", "wash-3"] as const;
+
 function Feature({
   feature: f,
   flip,
+  index,
 }: {
   feature: (typeof features)[number];
   flip: boolean;
+  index: number;
 }) {
   const text = useReveal<HTMLDivElement>();
   const shot = useReveal<HTMLDivElement>(80, flip ? 6 : -6);
@@ -94,7 +98,14 @@ function Feature({
         before:absolute before:inset-y-0 before:left-1/2 before:-z-10 before:w-screen
         before:-translate-x-1/2 ${flip ? "before:bg-surface-2" : "before:border-t before:border-line"}`}
     >
-      <div className="grid items-center gap-10 lg:grid-cols-2 lg:gap-16">
+      {/* The wash sits above the band and below the content, full-bleed so the
+          colour runs edge to edge rather than stopping at the container. */}
+      <div
+        aria-hidden
+        className={`pointer-events-none absolute inset-y-0 left-1/2 w-screen
+                    -translate-x-1/2 ${washes[index % washes.length]}`}
+      />
+      <div className="relative grid items-center gap-10 lg:grid-cols-2 lg:gap-16">
         <div ref={text.ref} style={text.style} className={flip ? "lg:order-2" : undefined}>
           <span className="inline-flex items-center gap-2 text-sm font-medium text-accent">
             <f.icon aria-hidden className="size-4" />
@@ -191,7 +202,7 @@ export function Landing({ onAuthed }: { onAuthed: () => void }) {
         </section>
 
         {features.map((f, i) => (
-          <Feature key={f.eyebrow} feature={f} flip={i % 2 === 1} />
+          <Feature key={f.eyebrow} feature={f} flip={i % 2 === 1} index={i} />
         ))}
 
       </main>

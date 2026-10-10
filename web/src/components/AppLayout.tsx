@@ -13,8 +13,13 @@ export function AppLayout({ onLogout }: { onLogout: () => void }) {
   const { me, watches, saved, error } = useAppData();
 
   return (
-    <div className="min-h-dvh bg-canvas">
-      <header className="sticky top-0 z-30 border-b border-line bg-canvas/85 backdrop-blur">
+    <div className="relative min-h-dvh bg-canvas">
+      {/* Same treatment as the landing page: signing in should not change what
+          the product looks like. Both layers are inert. */}
+      <div aria-hidden className="app-mesh" />
+      <div aria-hidden className="grain" />
+
+      <header className="sticky top-0 z-30 border-b border-line bg-canvas/70 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-4 px-4">
           {/* The wordmark is how you get back to search from anywhere. */}
           <Link to="/" aria-label="TicketWatcher home" className="rounded-lg">
@@ -59,7 +64,7 @@ export function AppLayout({ onLogout }: { onLogout: () => void }) {
         </div>
       </header>
 
-      <main className="mx-auto w-full max-w-5xl px-4 pb-16">
+      <main className="relative z-10 mx-auto w-full max-w-5xl px-4 pb-16">
         {/* Account-level and true on every page: an unverified account is polled
             normally but never emailed, so this must not be hidden behind a tab. */}
         {me && !me.email_verified && (
@@ -77,7 +82,7 @@ export function AppLayout({ onLogout }: { onLogout: () => void }) {
         <Outlet />
       </main>
 
-      <footer className="border-t border-line">
+      <footer className="relative z-10 border-t border-line">
         <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-center gap-x-5 gap-y-2 px-4 py-6">
           <Link to="/privacy" className="text-sm text-muted underline-offset-4 hover:text-ink hover:underline">
             Privacy policy

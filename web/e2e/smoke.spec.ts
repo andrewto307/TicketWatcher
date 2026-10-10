@@ -704,3 +704,112 @@ test.describe("dark mode depth", () => {
     expect(lightness(surface) - lightness(canvas)).toBeGreaterThanOrEqual(4);
   });
 });
+
+test.describe("background mesh", () => {
+  test("every landing screen carries colour, not one flat tone", async ({ page }) => {
+    await page.goto("/");
+
+    const tops = await page.evaluate(() =>
+      [...document.querySelectorAll("main > section")].map((s) =>
+        Math.round(s.getBoundingClientRect().top + window.scrollY),
+      ),
+    );
+
+    for (const [i, top] of tops.entries()) {
+      await page.evaluate((y) => window.scrollTo({ top: y, behavior: "instant" }), top);
+      await page.waitForTimeout(500);
+
+      // A wash whose stacking is wrong computes correctly but paints nothing,
+      // so the only honest check is the rendered pixels.
+      const shot = await page.screenshot({ clip: { x: 0, y: 0, width: 1280, height: 860 } });
+      const png = shot.toString("base64");
+      const spread = await page.evaluate(async (data) => {
+        const img = new Image();
+        img.src = "data:image/png;base64," + data;
+        await img.decode();
+        const c = document.createElement("canvas");
+        c.width = img.width;
+        c.height = img.height;
+        c.getContext("2d")!.drawImage(img, 0, 0);
+        const ctx = c.getContext("2d")!;
+        const pts = [
+          [40, 80],
+          [img.width - 40, 80],
+          [40, img.height - 60],
+          [img.width - 40, img.height - 60],
+        ].map(([x, y]) => [...ctx.getImageData(x, y, 1, 1).data].slice(0, 3));
+        return Math.max(...[0, 1, 2].map((ch) => Math.max(...pts.map((p) => p[ch])) - Math.min(...pts.map((p) => p[ch]))));
+      }, png);
+
+      expect(spread, `screen ${i} looks flat`).toBeGreaterThan(8);
+    }
+  });
+
+  test("the mesh runs edge to edge, with no seam at the container", async ({ page }) => {
+    await page.goto("/");
+
+    for (const sel of [".hero-glow", ".hero-grid"]) {
+      const w = await page.locator(sel).evaluate((e) => Math.round(e.getBoundingClientRect().width));
+      const vw = await page.evaluate(() => window.innerWidth);
+      // Clipped to the page container these leave visible vertical seams.
+      expect(Math.abs(w - vw), sel).toBeLessThanOrEqual(2);
+    }
+  });
+});
+
+test.describe("background carries across sign-in", () => {
+  test("the signed-in app has the same mesh, not a flat canvas", async ({ page }) => {
+    await mockApi(page, { events: [stubEvent()] });
+    await signIn(page);
+    await page.goto("/watches");
+    await page.waitForTimeout(400);
+
+    await expect(page.locator(".app-mesh")).toHaveCount(1);
+    await expect(page.locator(".grain")).toHaveCount(1);
+
+    // Measured, not assumed: a mesh behind an opaque layer computes fine and
+    // paints nothing, which is exactly what happened on the landing page.
+    const spread = await page.evaluate(() => {
+      const c = document.createElement("canvas");
+      return new Promise<number>((resolve) => {
+        const el = document.querySelector(".app-mesh") as HTMLElement;
+        resolve(getComputedStyle(el).backgroundImage.split("radial-gradient").length - 1);
+      });
+    });
+    expect(spread, "app mesh should layer several fields").toBeGreaterThanOrEqual(3);
+  });
+
+  test("logging in does not change the look of the page", async ({ page }) => {
+    const sample = async () =>
+      page.evaluate(() => {
+        const cs = getComputedStyle(document.documentElement);
+        return [1, 2, 3].map((n) => cs.getPropertyValue(`--c-mesh-${n}`).trim());
+      });
+
+    await page.goto("/");
+    const loggedOut = await sample();
+
+    await mockApi(page);
+    await signIn(page);
+    await page.goto("/watches");
+    const loggedIn = await sample();
+
+    // A flat canvas behind the dashboard and a colour mesh behind the landing
+    // page reads as two different sites.
+    expect(loggedIn).toEqual(loggedOut);
+  });
+
+  test("the app's background layers never swallow a click", async ({ page }) => {
+    await mockApi(page);
+    await signIn(page);
+    await page.goto("/watches");
+
+    for (const sel of [".app-mesh", ".grain"]) {
+      await expect(page.locator(sel)).toHaveCSS("pointer-events", "none");
+      await expect(page.locator(sel)).toHaveAttribute("aria-hidden", "true");
+    }
+
+    await page.getByRole("banner").getByRole("radio", { name: "Dark" }).click();
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+  });
+});

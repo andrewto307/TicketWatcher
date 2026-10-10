@@ -22,6 +22,15 @@
   --c-accent-fg: oklch(100% 0 0);
   --c-accent-soft: oklch(95.5% 0.025 262);
 
+  /* Decorative hues for the background mesh. Analogous to the accent (262):
+     a single hue is just a tint, a wide spread looks like a paint chart. */
+  --c-mesh-1: oklch(62% 0.19 262); /* accent blue */
+  --c-mesh-2: oklch(62% 0.17 305); /* violet */
+  --c-mesh-3: oklch(66% 0.14 212); /* cyan */
+  --mesh-a: 0.30; /* strength behind the hero */
+  --mesh-b: 0.22; /* strength behind a feature screen */
+  --mesh-c: 0.14; /* strength behind the signed-in app */
+
   /* Sale-state semantics. Reserved for status only, never decoration. */
   --c-good: oklch(52% 0.13 155);
   --c-good-soft: oklch(96% 0.035 155);
@@ -56,6 +65,14 @@
   --c-warn-border: oklch(40% 0.07 75);
   --c-danger: oklch(70% 0.17 25);
   --c-danger-soft: oklch(28% 0.07 25);
+
+  /* Colour reads as light in a dark room, so the mesh can carry further. */
+  --c-mesh-1: oklch(58% 0.21 262);
+  --c-mesh-2: oklch(56% 0.19 305);
+  --c-mesh-3: oklch(60% 0.16 212);
+  --mesh-a: 0.42;
+  --mesh-b: 0.22;
+  --mesh-c: 0.18;
 }
 
 @theme inline {
@@ -188,34 +205,64 @@
   opacity: 0.05;
 }
 
-/* A single wide radial in the accent colour, bleeding down from behind the
-   headline. Does more work in dark mode than light. */
+/* Three overlapping fields rather than one radial: where they meet they blend,
+   which is what stops the page reading as a flat tinted panel. */
 @utility hero-glow {
   position: absolute;
-  inset-inline: 0;
-  top: -12rem;
-  height: 44rem;
+  left: 50%;
+  width: 100vw;
+  transform: translateX(-50%);
+  top: -14rem;
+  height: 52rem;
   pointer-events: none;
-  background: radial-gradient(
-    60% 50% at 50% 30%,
-    color-mix(in oklch, var(--c-accent) 22%, transparent) 0%,
-    transparent 70%
-  );
+  background:
+    radial-gradient(
+      42% 46% at 18% 24%,
+      color-mix(in oklch, var(--c-mesh-2) calc(var(--mesh-a) * 100%), transparent) 0%,
+      transparent 72%
+    ),
+    radial-gradient(
+      46% 50% at 78% 18%,
+      color-mix(in oklch, var(--c-mesh-1) calc(var(--mesh-a) * 100%), transparent) 0%,
+      transparent 72%
+    ),
+    radial-gradient(
+      52% 44% at 48% 72%,
+      color-mix(in oklch, var(--c-mesh-3) calc(var(--mesh-a) * 72%), transparent) 0%,
+      transparent 74%
+    );
 }
 
-:root[data-theme="dark"] .hero-glow {
-  background: radial-gradient(
-    60% 50% at 50% 30%,
-    color-mix(in oklch, var(--c-accent) 30%, transparent) 0%,
-    transparent 70%
-  );
+/* One wash per feature screen, each a step further round the hue band, so
+   scrolling moves through a colour story instead of repeating a backdrop.
+   Centres sit inside the viewport, not in the corners: a blob centred off
+   screen only ever shows its faded tail. */
+@utility wash-1 {
+  background:
+    radial-gradient(70% 80% at 78% 28%, color-mix(in oklch, var(--c-mesh-1) calc(var(--mesh-b) * 100%), transparent) 0%, transparent 68%),
+    radial-gradient(66% 74% at 18% 82%, color-mix(in oklch, var(--c-mesh-3) calc(var(--mesh-b) * 80%), transparent) 0%, transparent 70%);
+}
+
+@utility wash-2 {
+  background:
+    radial-gradient(70% 80% at 22% 26%, color-mix(in oklch, var(--c-mesh-2) calc(var(--mesh-b) * 100%), transparent) 0%, transparent 68%),
+    radial-gradient(66% 74% at 82% 80%, color-mix(in oklch, var(--c-mesh-1) calc(var(--mesh-b) * 80%), transparent) 0%, transparent 70%);
+}
+
+@utility wash-3 {
+  background:
+    radial-gradient(72% 82% at 76% 24%, color-mix(in oklch, var(--c-mesh-3) calc(var(--mesh-b) * 100%), transparent) 0%, transparent 68%),
+    radial-gradient(64% 72% at 20% 84%, color-mix(in oklch, var(--c-mesh-2) calc(var(--mesh-b) * 80%), transparent) 0%, transparent 70%);
 }
 
 /* Texture with nothing to actually look at: a faint grid, faded out at the
    edges so it never reads as a boundary. */
 @utility hero-grid {
   position: absolute;
-  inset: 0;
+  inset-block: 0;
+  left: 50%;
+  width: 100vw;
+  transform: translateX(-50%);
   pointer-events: none;
   background-image:
     linear-gradient(to right, var(--c-border) 1px, transparent 1px),
@@ -247,4 +294,31 @@
 :root[data-theme="dark"] .shot-lit::after {
   opacity: 0.4;
   filter: blur(56px);
+}
+
+/* The signed-in app. Same mesh as the landing page so signing in does not
+   change what the product looks like, but weaker — here it sits behind real
+   content rather than an empty hero. Fixed, so a long watch list scrolls over
+   a steady backdrop instead of dragging the colour with it. */
+@utility app-mesh {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      52% 48% at 12% 0%,
+      color-mix(in oklch, var(--c-mesh-2) calc(var(--mesh-c) * 100%), transparent) 0%,
+      transparent 70%
+    ),
+    radial-gradient(
+      56% 52% at 88% 4%,
+      color-mix(in oklch, var(--c-mesh-1) calc(var(--mesh-c) * 100%), transparent) 0%,
+      transparent 72%
+    ),
+    radial-gradient(
+      60% 46% at 50% 100%,
+      color-mix(in oklch, var(--c-mesh-3) calc(var(--mesh-c) * 72%), transparent) 0%,
+      transparent 74%
+    );
 }
